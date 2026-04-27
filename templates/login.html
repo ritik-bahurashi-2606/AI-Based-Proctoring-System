@@ -1,0 +1,185 @@
+{% extends 'layout.html' %}
+{% block body %}
+<main>
+<section class="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
+    <div class="container">
+        <div class="col-12 d-flex align-items-center justify-content-center">
+            <div class="bg-white shadow-soft border rounded border-light p-4 p-lg-5 w-100 fmxw-650">
+                <div class="text-center text-md-center mb-4 mt-md-0">
+                    <h1 class="mb-0 h3">Sign in to our platform</h1>
+                </div>
+
+                <div class="card-body">
+                    {% if error %}
+                    <div class="alert alert-danger shadow-soft" role="alert">
+                        {{ error }}
+                    </div>
+                    {% endif %}
+                    {% if success %}
+                    <div class="alert alert-success shadow-soft" role="alert">
+                        {{ success }}
+                    </div>
+                    {% endif %}
+
+                    <form action="/login" method="POST" class="mt-4" id="loginForm" enctype="multipart/form-data" onsubmit="return validateLoginForm()">
+
+                        <div class="form-group">
+                            <label for="email">Email</label>
+                            <div class="input-group mb-4">
+                                <div class="input-group-prepend">
+                                    <span class="input-group-text"><span class="fas fa-envelope"></span></span>
+                                </div>
+                                <input name="email" id="email" class="form-control" placeholder="example@company.com" type="email" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="password">Password</label>
+                            <div class="input-group mb-4">
+                                <div class="input-group-prepend">
+                                    <span class="input-group-text"><span class="fas fa-unlock-alt"></span></span>
+                                </div>
+                                <input name="password" id="password" type="password" class="form-control" placeholder="Password" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="user_type">User Type</label>
+                            <select class="custom-select mb-3" id="user_type" name="user_type" required>
+                                <option value="student">Student</option>
+                                <option value="teacher">Professor / Teacher</option>
+                            </select>
+                        </div>
+
+                        <!-- Camera Section -->
+                        <div class="form-group">
+                            <label>Face Verification (Photo Capture)</label>
+                            <div class="text-center border rounded p-2 mb-2" style="background:#f8f9fa;">
+                                <video id="stream" width="100%" height="240" style="border-radius:8px; display:block;" autoplay playsinline muted></video>
+                                <canvas id="capture" width="370" height="240" style="display:none;"></canvas>
+                                <div id="snapshot" class="mt-2"></div>
+                                <div id="camera-status" class="text-warning small mt-1">
+                                    <i class="fas fa-spinner fa-spin"></i> Starting camera...
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2 mt-2" style="gap:10px;">
+                                <button id="btn-capture" type="button" class="btn btn-primary flex-fill" onclick="captureSnapshot()">
+                                    <i class="fas fa-camera"></i> Capture Image
+                                </button>
+                                <button id="btn-skip" type="button" class="btn btn-outline-secondary flex-fill" onclick="skipPhoto()">
+                                    <i class="fas fa-forward"></i> Skip Photo
+                                </button>
+                            </div>
+                            <small class="text-muted d-block mt-1">If camera doesn't work, click "Skip Photo" to login with password only.</small>
+                            <input type="hidden" id="image_hidden" name="image_hidden">
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <div><a href="/lostpassword" class="font-weight-bold">Lost password?</a></div>
+                        </div>
+
+                        <button type="submit" class="btn btn-block btn-primary">
+                            <i class="fas fa-sign-in-alt"></i> Sign in
+                        </button>
+                    </form>
+
+                    <div class="d-block d-sm-flex justify-content-center align-items-center mt-4">
+                        <span class="font-weight-normal">
+                            Not registered?
+                            <a href="/register" class="font-weight-bold">Create account</a>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+</main>
+
+<script>
+    var stream = document.getElementById("stream");
+    var capture = document.getElementById("capture");
+    var snapshot = document.getElementById("snapshot");
+    var cameraStatus = document.getElementById("camera-status");
+    var cameraStream = null;
+    var loginImageCaptured = false;
+
+    // Start camera immediately when page loads
+    function startCamera() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            cameraStatus.innerHTML = '<span class="text-danger"><i class="fas fa-exclamation-triangle"></i> Camera not supported. Use "Skip Photo".</span>';
+            return;
+        }
+
+        navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+            .then(function(mediaStream) {
+                cameraStream = mediaStream;
+                stream.srcObject = mediaStream;
+                stream.play();
+                cameraStatus.innerHTML = '<span class="text-success"><i class="fas fa-check-circle"></i> Camera ready! Click "Capture Image".</span>';
+            })
+            .catch(function(err) {
+                console.log("Camera error: " + err);
+                cameraStatus.innerHTML = '<span class="text-danger"><i class="fas fa-times-circle"></i> Camera blocked/unavailable. Click "Skip Photo" to continue.</span>';
+            });
+    }
+
+    function captureSnapshot() {
+        if (cameraStream) {
+            var ctx = capture.getContext('2d');
+            ctx.drawImage(stream, 0, 0, capture.width, capture.height);
+            var dataURL = capture.toDataURL("image/png");
+            var base64 = dataURL.replace("data:image/png;base64,", "");
+
+            // Show captured image
+            var img = new Image();
+            img.src = dataURL;
+            img.style.width = "100%";
+            img.style.borderRadius = "8px";
+            snapshot.innerHTML = '<p class="text-success small mt-1"><i class="fas fa-check"></i> Photo captured!</p>';
+            snapshot.prepend(img);
+
+            // Hide video, show canvas result
+            stream.style.display = "none";
+            document.getElementById("image_hidden").value = base64;
+            loginImageCaptured = true;
+
+            document.getElementById("btn-capture").innerHTML = '<i class="fas fa-redo"></i> Recapture';
+            document.getElementById("btn-capture").className = "btn btn-success flex-fill";
+            document.getElementById("btn-capture").onclick = function() {
+                stream.style.display = "block";
+                snapshot.innerHTML = "";
+                loginImageCaptured = false;
+                document.getElementById("image_hidden").value = "";
+                document.getElementById("btn-capture").innerHTML = '<i class="fas fa-camera"></i> Capture Image';
+                document.getElementById("btn-capture").className = "btn btn-primary flex-fill";
+                document.getElementById("btn-capture").onclick = captureSnapshot;
+            };
+        } else {
+            alert('Camera is not available. Please allow camera access or click "Skip Photo".');
+        }
+    }
+
+    function skipPhoto() {
+        // Use a placeholder value so the server skips face verification
+        document.getElementById("image_hidden").value = "no_camera";
+        loginImageCaptured = true;
+        cameraStatus.innerHTML = '<span class="text-info"><i class="fas fa-info-circle"></i> Signing in with password only (no photo).</span>';
+        document.getElementById("btn-skip").className = "btn btn-info flex-fill";
+        document.getElementById("btn-skip").innerHTML = '<i class="fas fa-check"></i> Photo Skipped';
+    }
+
+    function validateLoginForm() {
+        if (!loginImageCaptured || document.getElementById("image_hidden").value === '') {
+            // Auto-skip if they forgot to capture or skip
+            skipPhoto();
+        }
+        return true;
+    }
+
+    // Start camera on page load
+    window.onload = function() {
+        startCamera();
+    };
+</script>
+{% endblock %}

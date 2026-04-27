@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>MyProctor.ai</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <link rel="stylesheet" href="//use.fontawesome.com/releases/v5.0.7/css/all.css">
+
+  <!-- Favicon -->
+  <link rel="apple-touch-icon" sizes="120x120"
+    href="{{ url_for('static', filename='volt/assets/img/favicon/apple-touch-icon.png') }}">
+  <link rel="icon" type="image/png" sizes="32x32"
+    href="{{ url_for('static', filename='volt/assets/img/favicon/favicon-32x32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16"
+    href="{{ url_for('static', filename='volt/assets/img/favicon/favicon-16x16.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='volt/assets/img/favicon/site.webmanifest') }}">
+
+  <!-- Fontawesome -->
+  <link type="text/css" rel="stylesheet"
+    href="{{ url_for('static', filename='volt/vendor/@fortawesome/fontawesome-free/css/all.min.css') }}">
+
+  <!-- Volt CSS -->
+  <link type="text/css" rel="stylesheet" href="{{ url_for('static', filename='volt/css/volt.css') }}">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/limonte-sweetalert2/10.15.7/sweetalert2.all.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.10.23/css/jquery.dataTables.min.css">
+  <script src="https://cdn.datatables.net/1.10.23/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/buttons/1.6.5/js/dataTables.buttons.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.3/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/pdfmake.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.53/vfs_fonts.js"></script>
+  <script src="https://cdn.datatables.net/buttons/1.6.5/js/buttons.html5.min.js"></script>
+  <script src="https://cdn.datatables.net/buttons/1.6.5/js/buttons.print.min.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+
+  {% block head %}{% endblock %}
+
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      background-color: #f5f8fb;
+    }
+
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 230px;
+      height: 100vh;
+      background-color: #1a1d23;
+      overflow-y: auto;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-inner {
+      padding: 20px 16px;
+      flex: 1;
+    }
+
+    .sidebar-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 0 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 16px;
+    }
+
+    .sidebar-logo span {
+      color: #fff;
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-left: 10px;
+      letter-spacing: 0.5px;
+    }
+
+    .sidebar .nav-item {
+      margin-bottom: 2px;
+    }
+
+    .sidebar .nav-link {
+      color: #c8ccd4 !important;
+      padding: 9px 12px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      font-size: 0.9rem;
+      transition: background 0.2s, color 0.2s;
+      cursor: pointer;
+    }
+
+    .sidebar .nav-link:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+      color: #fff !important;
+      text-decoration: none;
+    }
+
+    .sidebar .nav-link.active {
+      background-color: rgba(255, 255, 255, 0.12);
+      color: #fff !important;
+    }
+
+    .sidebar-icon {
+      width: 22px;
+      text-align: center;
+      margin-right: 10px;
+      font-size: 0.95rem;
+      flex-shrink: 0;
+    }
+
+    .sidebar-text {
+      flex: 1;
+    }
+
+    .link-arrow {
+      font-size: 0.7rem;
+      color: rgba(255, 255, 255, 0.4);
+      transition: transform 0.2s;
+    }
+
+    .nav-link[aria-expanded="true"] .link-arrow {
+      transform: rotate(90deg);
+    }
+
+    .multi-level .nav-link {
+      padding-left: 44px;
+      font-size: 0.85rem;
+    }
+
+    .sidebar-logout {
+      padding: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .btn-logout {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 9px 16px;
+      background-color: #e8622a;
+      color: #fff !important;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      text-decoration: none;
+    }
+
+    .btn-logout:hover {
+      background-color: #cf4f18;
+      color: #fff !important;
+    }
+
+    .btn-logout i {
+      margin-right: 8px;
+    }
+
+    .main-content {
+      margin-left: 230px;
+      padding: 30px;
+      flex: 1;
+    }
+
+    #sticky-footer {
+      margin-left: 230px;
+      background: #fff;
+      border-top: 1px solid #e0e6ed;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+      }
+
+      .main-content,
+      #sticky-footer {
+        margin-left: 0;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <script type="text/javascript">
+    window.addEventListener('selectstart', function (e) { 
+        if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+            e.preventDefault(); 
+        }
+    });
+    $(document).ready(function () {
+      $('body').bind('cut copy', function (e) {
+        var tag = e.target.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea') {
+          e.preventDefault();
+        }
+      });
+
+      $('body').bind('paste', function (e) {
+        var tag = e.target.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea') {
+          e.preventDefault();
+        }
+      });
+      $("body").on("contextmenu", function (e) { 
+        var tag = e.target.tagName.toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea') {
+          return false; 
+        }
+      });
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.key == 'PrintScreen') {
+        navigator.clipboard.writeText('');
+        alert('Screenshots disabled!');
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key == 'p') {
+        alert('This section is not allowed to print or export to PDF');
+        e.cancelBubble = true;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    });
+
+    function funLogout() {
+      Swal.fire({
+        title: 'Are you sure?',
+        text: "Do you really want to logout?",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, Logout me!',
+        cancelButtonText: 'No!',
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#202124',
+        reverseButtons: true
+      }).then((result) => {
+        if (result.isConfirmed) {
+          $.ajax({
+            type: "POST",
+            url: "/logout",
+            success: function (response) {
+              if (response == "success") {
+                window.location.href = "/";
+              }
+            }
+          });
+          Swal.fire('Success!', 'You have been signed out.', 'success');
+        } else if (result.dismiss === Swal.DismissReason.cancel) {
+          Swal.fire('Cancelled', 'Logout cancelled.', 'error');
+        }
+      });
+    }
+  </script>
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar" id="sidebarMenu">
+    <div class="sidebar-inner">
+
+      <div class="sidebar-logo">
+        <i class="fas fa-robot text-warning fa-lg"></i>
+        <span>MyProctor.ai</span>
+      </div>
+
+      <ul class="nav flex-column">
+
+        <!-- Create Exam -->
+        <li class="nav-item">
+          <a class="nav-link collapsed" data-toggle="collapse" href="#submenu-create" aria-expanded="false">
+            <span class="sidebar-icon"><i class="fas fa-plus"></i></span>
+            <span class="sidebar-text">Create Exam</span>
+            <span class="link-arrow"><i class="fas fa-chevron-right"></i></span>
+          </a>
+          <div class="collapse multi-level" id="submenu-create">
+            <ul class="nav flex-column">
+              <li class="nav-item">
+                <a class="nav-link" href="/create-test">
+                  <span class="sidebar-icon"><i class="fas fa-circle fa-xs"></i></span>
+                  <span class="sidebar-text">Objective</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="/create_test_lqa">
+                  <span class="sidebar-icon"><i class="fas fa-circle fa-xs"></i></span>
+                  <span class="sidebar-text">Subjective</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="/create_test_pqa">
+                  <span class="sidebar-icon"><i class="fas fa-circle fa-xs"></i></span>
+                  <span class="sidebar-text">Practical</span>
+                </a>
+              </li>
+            </ul>
+          </div>
+        </li>
+
+        <!-- Generate Questions -->
+        <li class="nav-item">
+          <a class="nav-link" href="/generate_test">
+            <span class="sidebar-icon"><i class="fas fa-magic"></i></span>
+            <span class="sidebar-text">Generate Questions</span>
+          </a>
+        </li>
+
+        <!-- Create Questions (Manual) -->
+        <li class="nav-item">
+          <a class="nav-link" href="/create_questions">
+            <span class="sidebar-icon"><i class="fas fa-pencil-alt"></i></span>
+            <span class="sidebar-text">Create Questions</span>
+          </a>
+        </li>
+
+
+        <!-- View Questions -->
+        <li class="nav-item">
+          <a class="nav-link" href="/viewquestions">
+            <span class="sidebar-icon"><i class="fas fa-eye"></i></span>
+            <span class="sidebar-text">View Questions</span>
+          </a>
+        </li>
+
+        <!-- Update Questions -->
+        <li class="nav-item">
+          <a class="nav-link" href="/updatedispques">
+            <span class="sidebar-icon"><i class="fas fa-edit"></i></span>
+            <span class="sidebar-text">Update Questions</span>
+          </a>
+        </li>
+
+        <!-- Delete Questions -->
+        <li class="nav-item">
+          <a class="nav-link" href="/deldispques">
+            <span class="sidebar-icon"><i class="fas fa-trash"></i></span>
+            <span class="sidebar-text">Delete Questions</span>
+          </a>
+        </li>
+
+        <!-- Exam History -->
+        <li class="nav-item">
+          <a class="nav-link" href="/{{ session['email'] }}/disptests">
+            <span class="sidebar-icon"><i class="fas fa-history"></i></span>
+            <span class="sidebar-text">Exam History</span>
+          </a>
+        </li>
+
+        <!-- Live Monitoring -->
+        <li class="nav-item">
+          <a class="nav-link" href="/livemonitoringtid">
+            <span class="sidebar-icon"><i class="fas fa-video"></i></span>
+            <span class="sidebar-text">Live Monitoring</span>
+          </a>
+        </li>
+
+        <!-- Student Monitoring -->
+        <li class="nav-item">
+          <a class="nav-link" href="/viewstudentslogs">
+            <span class="sidebar-icon"><i class="fas fa-user-graduate"></i></span>
+            <span class="sidebar-text">Student Monitoring</span>
+          </a>
+        </li>
+
+        <!-- Cheating Report -->
+        <li class="nav-item">
+          <a class="nav-link" href="/cheat_report">
+            <span class="sidebar-icon"><i class="fas fa-user-secret"></i></span>
+            <span class="sidebar-text">Cheating Report</span>
+          </a>
+        </li>
+
+        <!-- Insert Marks -->
+        <li class="nav-item">
+          <a class="nav-link" href="/insertmarkstid">
+            <span class="sidebar-icon"><i class="fas fa-pen-nib"></i></span>
+            <span class="sidebar-text">Insert Marks</span>
+          </a>
+        </li>
+
+        <!-- Publish Results -->
+        <li class="nav-item">
+          <a class="nav-link" href="/publish-results-testid">
+            <span class="sidebar-icon"><i class="fas fa-bullhorn"></i></span>
+            <span class="sidebar-text">Publish Results</span>
+          </a>
+        </li>
+
+        <!-- Results -->
+        <li class="nav-item">
+          <a class="nav-link" href="/{{ session['email'] }}/tests-created">
+            <span class="sidebar-icon"><i class="fas fa-chart-bar"></i></span>
+            <span class="sidebar-text">Results</span>
+          </a>
+        </li>
+
+        <!-- Report Problem -->
+        <li class="nav-item">
+          <a class="nav-link" href="/report_professor">
+            <span class="sidebar-icon"><i class="fas fa-exclamation-circle"></i></span>
+            <span class="sidebar-text">Report Problem</span>
+          </a>
+        </li>
+
+      </ul>
+    </div>
+
+    <!-- Logout Button -->
+    <div class="sidebar-logout">
+      <a href="#" class="btn-logout" onclick="funLogout(); return false;">
+        <i class="fas fa-sign-out-alt"></i> Logout
+      </a>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+    {% include 'includes/_messages.html' %}
+    {% block body %}{% endblock %}
+  </div>
+
+  <!-- FOOTER -->
+  <footer id="sticky-footer" class="py-3">
+    <div class="d-flex text-center justify-content-center align-items-center">
+      <p class="font-weight-bold mb-0 text-muted" style="font-size:0.85rem;">
+        Copyright &copy; MyProctor.ai
+        <span class="current-year">
+          <script>document.write(new Date().getFullYear())</script>
+        </span>.
+        All rights reserved.
+      </p>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="{{ url_for('static', filename='volt/vendor/@popperjs/core/dist/umd/popper.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='volt/vendor/bootstrap/dist/js/bootstrap.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='volt/vendor/onscreen/dist/on-screen.umd.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='volt/vendor/sweetalert2/dist/sweetalert2.all.min.js') }}"></script>
+  <script src="{{ url_for('static', filename='volt/assets/js/volt.js') }}"></script>
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+
+</body>
+
+</html>

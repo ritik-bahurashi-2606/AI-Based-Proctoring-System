@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>MyProctor.ai – Student</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pixel.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/@fortawesome/fontawesome-free/css/all.min.css') }}">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/limonte-sweetalert2/10.15.7/sweetalert2.all.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6fb; }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: 220px;
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+            height: 100vh;
+            position: fixed;
+            top: 0; left: 0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 2px 0 12px rgba(0,0,0,0.3);
+        }
+
+        .sidebar .brand {
+            padding: 22px 20px 18px;
+            font-size: 17px;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: .5px;
+            border-bottom: 1px solid rgba(255,255,255,.1);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .sidebar .brand span { color: #38bdf8; }
+
+        .sidebar .user-info {
+            padding: 14px 20px;
+            border-bottom: 1px solid rgba(255,255,255,.08);
+            margin-bottom: 8px;
+        }
+        .sidebar .user-info .user-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #e2e8f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .sidebar .user-info .user-role {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 2px;
+        }
+        .sidebar .user-info .user-badge {
+            display: inline-block;
+            background: #0ea5e9;
+            color: #fff;
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            margin-top: 4px;
+        }
+
+        .sidebar a {
+            color: #94a3b8;
+            text-decoration: none;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13.5px;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+        .sidebar a:hover, .sidebar a.active {
+            background: rgba(255,255,255,.06);
+            color: #f1f5f9;
+            border-left-color: #38bdf8;
+        }
+        .sidebar a i { width: 18px; text-align: center; font-size: 14px; }
+
+        .sidebar .divider {
+            border-top: 1px solid rgba(255,255,255,.08);
+            margin: 8px 0;
+        }
+        .sidebar .section-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #475569;
+            padding: 10px 20px 4px;
+            font-weight: 600;
+        }
+        .sidebar-bottom {
+            margin-top: auto;
+            padding: 16px;
+            border-top: 1px solid rgba(255,255,255,.08);
+        }
+        .logout-btn {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: #fff !important;
+            border-radius: 8px;
+            padding: 10px 16px !important;
+            text-align: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 13px !important;
+            border-left: none !important;
+            transition: transform .15s, box-shadow .15s !important;
+        }
+        .logout-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(239,68,68,.4);
+            background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
+            color: #fff !important;
+        }
+
+        /* ── Main Content ── */
+        .main-content {
+            margin-left: 220px;
+            padding: 28px 32px;
+            min-height: 100vh;
+        }
+
+        /* ── Top Bar ── */
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+        }
+        .topbar h4 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        /* flash messages */
+        .flash-container { margin-bottom: 16px; }
+        .alert { padding: 10px 16px; border-radius: 8px; margin-bottom: 8px; font-size: 14px; }
+        .alert-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .alert-danger  { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        .alert-warning { background: #fef9c3; color: #854d0e; border: 1px solid #fef08a; }
+        .alert-info    { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    </style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<div class="sidebar">
+    <div class="brand">
+        <i class="fas fa-eye" style="color:#38bdf8"></i>
+        MyProctor<span>.ai</span>
+    </div>
+
+    <div class="user-info">
+        <div class="user-name"><i class="fas fa-user-graduate" style="color:#38bdf8; margin-right:6px;"></i>{{ session.get('name','Student') }}</div>
+        <div class="user-role">{{ session.get('email','') }}</div>
+        <div class="user-badge">Student</div>
+    </div>
+
+    <div class="section-label">Exam</div>
+    <a href="#" onclick="funStartExam(); return false;">
+        <i class="fas fa-clipboard-list"></i> Give Exam
+    </a>
+    <a href="/{{ session.get('email','') }}/student_test_history">
+        <i class="fas fa-history"></i> Exam History
+    </a>
+    <a href="/{{ session.get('email','') }}/tests-given">
+        <i class="fas fa-poll"></i> My Results
+    </a>
+
+    <div class="divider"></div>
+    <div class="section-label">Account</div>
+    <a href="/changepassword_student">
+        <i class="fas fa-key"></i> Change Password
+    </a>
+    <a href="/report_student">
+        <i class="fas fa-flag"></i> Report Problem
+    </a>
+
+    <div class="sidebar-bottom">
+        <a href="#" class="logout-btn" onclick="logoutUser(); return false;">
+            <i class="fas fa-sign-out-alt"></i> Logout
+        </a>
+    </div>
+</div>
+
+<!-- ── Main Content ── -->
+<div class="main-content">
+    <div class="flash-container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+    </div>
+
+    {% block body %}{% endblock %}
+</div>
+
+<!-- Exam start modal + logout -->
+<script>
+function funStartExam() {
+    Swal.fire({
+        title: '<strong>BEFORE EXAM RULES</strong>',
+        icon: 'warning',
+        html:
+            '<h6>ONLINE EXAM RULES – FOLLOW STRICTLY</h6>' +
+            '<ol style="text-align:left;font-size:13px;">' +
+            '<li>Do NOT minimize the browser window.</li>' +
+            '<li>Ensure your camera is working properly.</li>' +
+            '<li>No mobile phones or external materials allowed.</li>' +
+            '<li>Use only the in-built calculator provided.</li>' +
+            '<li>Do NOT use incognito mode. Enable cookies.</li>' +
+            '</ol>',
+        showCancelButton: true,
+        confirmButtonText: 'OK, BEGIN EXAM!',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#0f172a',
+        cancelButtonColor: '#64748b',
+    }).then((result) => {
+        if (result.isConfirmed) {
+            window.location.href = '/give-test';
+        }
+    });
+}
+
+function logoutUser() {
+    Swal.fire({
+        title: 'Are you sure?',
+        text: 'Do you want to logout?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, Logout',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#64748b',
+    }).then((result) => {
+        if (result.isConfirmed) {
+            fetch('/logout', { method: 'POST' })
+                .then(() => { window.location.href = '/'; });
+        }
+    });
+}
+
+// Disable right-click and copy-paste, except on inputs/textareas
+document.addEventListener('contextmenu', e => {
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+    }
+});
+document.addEventListener('copy', e => {
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+    }
+});
+document.addEventListener('paste', e => {
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+    }
+});
+document.addEventListener('cut', e => {
+    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+    }
+});
+document.addEventListener('keyup', (e) => {
+    if (e.key == 'PrintScreen') {
+        navigator.clipboard.writeText('');
+        alert('Screenshots disabled!');
+    }
+});
+document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key == 'p') {
+        e.preventDefault();
+        alert('Printing is not allowed during an exam.');
+    }
+});
+</script>
+</body>
+</html>

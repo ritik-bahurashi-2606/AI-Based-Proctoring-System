@@ -1,0 +1,288 @@
+{% extends "professor_dashboard.html" %}
+
+{% block body %}
+<div class="container-fluid px-2">
+
+  <!-- ── Page Header ── -->
+  <div class="d-flex align-items-center mb-4">
+    <div>
+      <h4 class="mb-0 font-weight-bold" style="color:#1a1d23;">
+        <i class="fas fa-pencil-alt text-primary mr-2"></i>Create Questions Manually
+      </h4>
+      {% if exam_info %}
+      <small class="text-muted">
+        Exam: <strong>{{ exam_info.test_id }}</strong>
+        {% if exam_info.subject %} | Subject: <strong>{{ exam_info.subject }}</strong>{% endif %}
+        {% if exam_info.topic %} | Topic: <strong>{{ exam_info.topic }}</strong>{% endif %}
+        | Type: <span class="badge badge-secondary">{{ exam_info.test_type }}</span>
+      </small>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('professor_index') }}" class="btn btn-sm btn-outline-secondary ml-auto">
+      <i class="fas fa-arrow-left mr-1"></i>Dashboard
+    </a>
+  </div>
+
+  <!-- ── Flash Messages ── -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+      <div class="alert alert-{{ 'success' if category == 'success' else 'danger' if category == 'danger' else 'warning' }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="close" data-dismiss="alert">
+          <span>&times;</span>
+        </button>
+      </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <!-- ── Step 1: Select Exam ID (shown even if draft is selected) ── -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white d-flex align-items-center">
+      <h6 class="mb-0 font-weight-bold text-primary">
+        <i class="fas fa-list-alt mr-2"></i>Select an Exam
+      </h6>
+      {% if exam_id == 'DRAFT' %}
+      <span class="badge badge-warning ml-auto"><i class="fas fa-edit mr-1"></i>DRAFT MODE (Bank)</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <form method="GET" action="{{ url_for('create_questions') }}" class="form-inline">
+        <label class="mr-2 font-weight-bold">Select Course/Exam:</label>
+        <select name="exam_id" class="form-control mr-2">
+          <option value="DRAFT" {% if exam_id == 'DRAFT' %}selected{% endif %}>-- MY QUESTION BANK (DRAFT) --</option>
+          {% for t in all_tests %}
+          <option value="{{ t.test_id }}" {% if t.test_id == exam_id %}selected{% endif %}>
+            {{ t.test_id }}{% if t.subject %} — {{ t.subject }}{% endif %}{% if t.topic %} ({{ t.topic }}){% endif %} [{{ t.test_type }}]
+          </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary">
+          <i class="fas fa-arrow-right mr-1"></i>Switch
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Step 2: Question Form ── -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white d-flex align-items-center">
+      <h6 class="mb-0 font-weight-bold text-primary">
+        <i class="fas fa-plus-circle mr-2"></i>Add a New Question to <strong>{{ exam_id }}</strong>
+      </h6>
+    </div>
+    <div class="card-body">
+
+      <!-- Question Type Toggle -->
+      <div class="mb-3">
+        <label class="font-weight-bold">Question Type:</label>
+        <div class="btn-group ml-3" id="qTypeToggle">
+          <button type="button" class="btn btn-primary btn-sm active" onclick="switchType('objective')">
+            <i class="fas fa-list-ol mr-1"></i>Objective (MCQ)
+          </button>
+          <button type="button" class="btn btn-outline-primary btn-sm" onclick="switchType('subjective')">
+            <i class="fas fa-paragraph mr-1"></i>Subjective
+          </button>
+        </div>
+      </div>
+
+      <!-- ── MCQ Form ── -->
+      <div id="objectiveForm">
+        <form method="POST" action="{{ url_for('create_questions') }}">
+          <input type="hidden" name="form_action" value="add_question">
+          <input type="hidden" name="question_type" value="objective">
+          <input type="hidden" name="exam_id" value="{{ exam_id }}">
+
+          <div class="form-group">
+            <label class="font-weight-bold">Question <span class="text-danger">*</span></label>
+            <textarea name="question" id="objectiveQuestion" class="form-control" rows="3"
+              placeholder="Enter your question here..." required></textarea>
+          </div>
+
+          <div class="row">
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Option A <span class="text-danger">*</span></label>
+                <input type="text" name="option_a" class="form-control" placeholder="Option A" required>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Option B <span class="text-danger">*</span></label>
+                <input type="text" name="option_b" class="form-control" placeholder="Option B" required>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Option C</label>
+                <input type="text" name="option_c" class="form-control" placeholder="Option C (optional)">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Option D</label>
+                <input type="text" name="option_d" class="form-control" placeholder="Option D (optional)">
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="col-md-4">
+              <div class="form-group">
+                <label class="font-weight-bold">Correct Answer <span class="text-danger">*</span></label>
+                <select name="correct_answer" class="form-control" required>
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                  <option value="D">D</option>
+                </select>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-group">
+                <label class="font-weight-bold">Marks</label>
+                <input type="number" name="marks" class="form-control" value="1" min="1" max="100">
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-success">
+            <i class="fas fa-save mr-1"></i>Save Objective Question
+          </button>
+        </form>
+      </div>
+
+      <!-- ── Subjective Form ── -->
+      <div id="subjectiveForm" style="display:none;">
+        <form method="POST" action="{{ url_for('create_questions') }}">
+          <input type="hidden" name="form_action" value="add_question">
+          <input type="hidden" name="question_type" value="subjective">
+          <input type="hidden" name="exam_id" value="{{ exam_id }}">
+
+          <div class="form-group">
+            <label class="font-weight-bold">Question <span class="text-danger">*</span></label>
+            <textarea name="question" id="subjectiveQuestion" class="form-control" rows="3"
+              placeholder="Enter your question here..." required></textarea>
+          </div>
+
+          <div class="form-group">
+            <label>Model Answer <small class="text-muted">(optional — for reference/grading)</small></label>
+            <textarea name="model_answer" class="form-control" rows="4"
+              placeholder="Enter the expected/model answer..."></textarea>
+          </div>
+
+          <div class="form-group col-md-3 px-0">
+            <label class="font-weight-bold">Marks</label>
+            <input type="number" name="marks" class="form-control" value="5" min="1" max="100">
+          </div>
+
+          <button type="submit" class="btn btn-success">
+            <i class="fas fa-save mr-1"></i>Save Subjective Question
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Saved Questions Table ── -->
+  <div class="card shadow-sm mb-5">
+    <div class="card-header bg-white d-flex align-items-center">
+      <h6 class="mb-0 font-weight-bold text-primary">
+        <i class="fas fa-list mr-2"></i>Questions in <strong>{{ exam_id }}</strong>
+        <span class="badge badge-primary ml-2">{{ questions|length }}</span>
+      </h6>
+      <div class="ml-auto">
+        <a href="{{ url_for('download_questions_csv', exam_id=exam_id, q_type='objective') }}" class="btn btn-sm btn-info mr-2">
+            <i class="fas fa-download mr-1"></i>CSV (Objective)
+        </a>
+        <a href="{{ url_for('download_questions_csv', exam_id=exam_id, q_type='subjective') }}" class="btn btn-sm btn-secondary">
+            <i class="fas fa-download mr-1"></i>CSV (Subjective)
+        </a>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      {% if questions %}
+      <div class="table-responsive">
+        <table class="table table-hover table-bordered mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th style="width:40px;">#</th>
+              <th style="width:80px;">Type</th>
+              <th>Question</th>
+              <th>Options / Answer</th>
+              <th style="width:60px;">Marks</th>
+              <th style="width:50px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for q in questions %}
+            <tr>
+              <td class="text-muted">{{ loop.index }}</td>
+              <td>
+                {% if q.question_type == 'objective' %}
+                <span class="badge badge-info">MCQ</span>
+                {% else %}
+                <span class="badge badge-secondary">Subj.</span>
+                {% endif %}
+              </td>
+              <td>{{ q.question }}</td>
+              <td class="small">
+                {% if q.question_type == 'objective' %}
+                  <div><span class="text-muted">A:</span> {{ q.option_a }} | <span class="text-muted">B:</span> {{ q.option_b }}</div>
+                  {% if q.option_c %}<div><span class="text-muted">C:</span> {{ q.option_c }} {% if q.option_d %}| <span class="text-muted">D:</span> {{ q.option_d }}{% endif %}</div>{% endif %}
+                  <div class="mt-1"><strong class="text-success">✓ Answer: {{ q.correct_answer }}</strong></div>
+                {% else %}
+                  <em class="text-muted">{{ q.model_answer or '—' }}</em>
+                {% endif %}
+              </td>
+              <td class="text-center font-weight-bold">{{ q.marks }}</td>
+              <td class="text-center">
+                  <form method="POST" action="{{ url_for('delete_manual_question', test_id=exam_id, q_type=q.question_type, qid=q.qid) }}" onsubmit="return confirm('Delete this question?');">
+                      <button type="submit" class="btn btn-link text-danger p-0">
+                          <i class="fas fa-trash-alt"></i>
+                      </button>
+                  </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-5 text-muted">
+        <i class="fas fa-inbox fa-2x mb-2"></i>
+        <p>No questions found in this set.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+
+</div>
+
+<script>
+  function switchType(type) {
+    const objForm  = document.getElementById('objectiveForm');
+    const subForm  = document.getElementById('subjectiveForm');
+    const btns     = document.querySelectorAll('#qTypeToggle button');
+
+    if (type === 'objective') {
+      objForm.style.display = 'block';
+      subForm.style.display = 'none';
+      btns[0].classList.add('active', 'btn-primary');
+      btns[0].classList.remove('btn-outline-primary');
+      btns[1].classList.remove('active', 'btn-primary');
+      btns[1].classList.add('btn-outline-primary');
+    } else {
+      objForm.style.display = 'none';
+      subForm.style.display = 'block';
+      btns[1].classList.add('active', 'btn-primary');
+      btns[1].classList.remove('btn-outline-primary');
+      btns[0].classList.remove('active', 'btn-primary');
+      btns[0].classList.add('btn-outline-primary');
+    }
+  }
+</script>
+{% endblock %}

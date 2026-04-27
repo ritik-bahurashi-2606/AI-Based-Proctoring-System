@@ -1,0 +1,180 @@
+{% extends 'layout.html' %}
+{% block body %}
+<main>
+ <section class="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
+            <div class="container">
+                    <div class="col-12 d-flex align-items-center justify-content-center">
+                        <div class="bg-white shadow-soft border rounded border-light p-4 p-lg-5 w-100 fmxw-650">
+                            <div class="text-center text-md-center mb-4 mt-md-0">
+                                <h1 class="mb-0 h3">Create an Account</h1>
+                            </div>
+							<img src="{{ url_for('static', filename='personal_information.png') }}">
+                            <div class="card-body">
+                                {% if error %}
+                                <div class="alert alert-danger shadow-soft" role="alert">
+                                    {{ error }}
+                                </div>
+                                {% endif %}
+							    <form action="/register" method="POST" class="mt-4" id="registerForm" enctype="multipart/form-data" onsubmit="return validateForm()">
+                                    <div class="form-group">
+                                      <label for="email">EMAIL</label>
+                                      <div class="input-group mb-4">
+                                          <div class="input-group-prepend">
+                                              <span class="input-group-text"><span class="fas fa-envelope"></span></span>
+                                          </div>
+                                          <input name="email" type="email" class="form-control" id="email" placeholder="example@company.com" aria-label="email address" required>   
+                                      </div>
+                                  </div>
+                                  <div class="form-group">
+                                    <label for="name">NAME</label>
+                                    <div class="input-group mb-4">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text"><span class="fas fa-user"></span></span>
+                                        </div>
+                                        <input name="name" class="form-control" id="name" placeholder="John Doe" type="text" required>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                  <label for="password">PASSWORD</label>
+                                  <div class="input-group mb-4">
+                                      <div class="input-group-prepend">
+                                          <span class="input-group-text"><span class="fas fa-unlock-alt"></span></span>
+                                      </div>
+                                      <input name="password" type="text" class="form-control" id="password" style="-webkit-text-security:disc;" placeholder="Password" aria-label="Password" required>
+                                  </div>
+                              </div>
+                            <div class="form-group">
+                                <label class="my-1 mr-2" for="inlineFormCustomSelectPref">Choose User Type</label>
+                                <select class="custom-select my-1 mr-sm-2" id="inlineFormCustomSelectPref" name="user_type" required>
+                                    <option value="student">Student</option>
+                                    <option value="teacher">Professor</option>
+                                </select>
+                            </div>
+                            <div class="form-group">''
+                            <div id="camera-status"></div>
+                            <video id="stream" width="370" height="320" autoplay playsinline muted></video>
+                               <canvas id="capture" width="370" height="320" style="display:none;">
+                                </canvas>
+                            
+                              <br>
+                                <button id="btn-capture" type="button" class="btn btn-primary justify-content-center">Capture Image</button>
+                            <br><br>
+                                <div id="snapshot"></div>
+                            <input type="hidden" id="image_hidden" name="image_hidden">
+                            </div>
+      <input type="submit" class="btn btn-primary form-group justify-content-center" value="Register">
+    </form>
+    <p>Already have an account?
+        <a href="/login" >Click here</a>.
+      </p>
+  </div>
+  <div>
+  </div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<script>
+    var btnCapture = document.getElementById("btn-capture");
+    var stream = document.getElementById("stream");
+    var capture = document.getElementById("capture");
+    var snapshot = document.getElementById("snapshot");
+    var cameraStream = null;
+    var imageCaptured = false;
+
+    btnCapture.addEventListener("click", captureSnapshot);
+
+    function startStreaming() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            alert('Your browser does not support camera access. Please use Chrome or Firefox.');
+            return;
+        }
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+        .then(function(mediaStream) {
+            cameraStream = mediaStream;
+            stream.srcObject = mediaStream;
+            stream.play();
+            console.log("Camera started successfully");
+        })
+        .catch(function(err) {
+            console.log("Camera error: " + err);
+            // ✅ KEY FIX: Show a message but don't block registration
+            document.getElementById("camera-status").innerHTML = 
+                '<div class="alert alert-warning">⚠️ Camera not available. You can still register — admin will verify manually.</div>';
+            // Set a dummy placeholder so image_hidden is not empty
+            document.getElementById("image_hidden").value = "no_camera";
+            imageCaptured = true;
+        });
+    }
+
+    function captureSnapshot() {
+        if (null != cameraStream) {
+            var ctx = capture.getContext('2d');
+            var img = new Image();
+
+            ctx.drawImage(stream, 0, 0, capture.width, capture.height);
+
+            img.src = capture.toDataURL("image/png");
+            img.width = 370;
+            img.height = 320;
+
+            snapshot.innerHTML = '';
+            snapshot.appendChild(img);
+
+            var d1 = capture.toDataURL("image/png");
+            var res = d1.replace("data:image/png;base64,", "");
+
+            snapshot.innerHTML = '';
+            snapshot.appendChild(img);
+
+            $("#image_hidden").val(res);
+            imageCaptured = true;
+
+            $("#btn-capture").text("✅ Image Captured! Click to Recapture")
+                             .removeClass("btn-primary")
+                             .addClass("btn-success");
+        } else {
+            // ✅ KEY FIX: If camera not available, still allow registration
+            alert('Camera not started. If you have no camera, you can still register.');
+            document.getElementById("image_hidden").value = "no_camera";
+            imageCaptured = true;
+            $("#btn-capture").text("✅ Skipped (No Camera)")
+                             .removeClass("btn-primary")
+                             .addClass("btn-warning");
+        }
+    }
+
+    function validateForm() {
+        var name = document.getElementById("name").value.trim();
+        var email = document.getElementById("email").value.trim();
+        var password = document.getElementById("password").value.trim();
+
+        if (!name) {
+            alert('Please enter your name.');
+            return false;
+        }
+        if (!email) {
+            alert('Please enter your email.');
+            return false;
+        }
+        if (!password) {
+            alert('Please enter your password.');
+            return false;
+        }
+        if (!imageCaptured || $("#image_hidden").val() === '') {
+            alert('Please click the "Capture Image" button first.');
+            return false;
+        }
+        return true;
+    }
+
+    window.onload = function() {
+        startStreaming();
+    }
+</script>
+{% endblock %}

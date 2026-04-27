@@ -1,0 +1,102 @@
+{% extends 'professor_dashboard.html' %}
+{% block body %}
+<style>
+  .btn-edit-q {
+    padding: 4px 10px; font-size: 0.78rem; font-weight: 600;
+    border-radius: 6px; border: 2px solid #3d7eff; color: #3d7eff;
+    background: transparent; text-decoration: none; display: inline-block;
+    transition: background 0.18s, color 0.18s; white-space: nowrap;
+  }
+  .btn-edit-q:hover { background: #3d7eff; color: #fff; text-decoration: none; }
+  .btn-del-q {
+    padding: 4px 10px; font-size: 0.78rem; font-weight: 600;
+    border-radius: 6px; border: 2px solid #dc3545; color: #dc3545;
+    background: transparent; cursor: pointer; display: inline-block;
+    transition: background 0.18s, color 0.18s; white-space: nowrap; margin-left: 4px;
+  }
+  .btn-del-q:hover { background: #dc3545; color: #fff; }
+</style>
+
+<div class="row align-items-center d-flex justify-content-center">
+    <div class="col-12 mb-4">
+        <div class="card border-light shadow-sm components-section">
+            <div class="card-body">
+                {% if (callresults is defined and callresults) %}
+                <div class="d-flex align-items-center mb-3">
+                    <h3 class="h4 mb-0">Practical Questions &nbsp;<small class="text-muted" style="font-size:0.85rem;">Exam: {{ tid }}</small></h3>
+                </div>
+                <div class="table-responsive">
+                    <table id="example" class="display nowrap" style="width:100%">
+                        <thead class="thead-light">
+                            <tr>
+                                <th>QID</th>
+                                <th>QUESTION</th>
+                                <th>COMPILER</th>
+                                <th>MARKS</th>
+                                <th>ACTIONS</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for res in callresults %}
+                        <tr>
+                            <td>{{ res['qid'] }}</td>
+                            <td>{{ res['q'] }}</td>
+                            <td>{{ res['compiler'] }}</td>
+                            <td>{{ res['marks'] }}</td>
+                            <td>
+                                <a href="/updatePQA/{{ res['test_id'] }}/{{ res['qid'] }}" class="btn-edit-q" title="Edit question">
+                                    <i class="fas fa-pen"></i> Edit
+                                </a>
+                                <button class="btn-del-q"
+                                        onclick="confirmDeletePQA('{{ res['test_id'] }}', '{{ res['qid'] }}')"
+                                        title="Delete question">
+                                    <i class="fas fa-trash"></i> Delete
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="col-lg-12 col-sm-16">
+                    <center><lottie-player src="https://assets7.lottiefiles.com/datafiles/vhvOcuUkH41HdrL/data.json"
+                        background="transparent" speed="1" style="width:300px;height:300px;" loop autoplay></lottie-player></center>
+                    <h3 class="h3 text-center">No Records Found!</h3>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmDeletePQA(testid, qid) {
+    Swal.fire({
+        title: 'Delete Question?',
+        text: 'This action cannot be undone.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, Delete',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#dc3545',
+        cancelButtonColor: '#6c757d',
+        reverseButtons: true
+    }).then(function(result) {
+        if (result.isConfirmed) {
+            fetch('/delete_pqa_question/' + testid + '/' + qid, { method: 'POST' })
+            .then(function(r){ window.location.reload(); })
+            .catch(function(){ window.location.reload(); });
+        }
+    });
+}
+
+$(document).ready(function() {
+    $('#example').DataTable({
+        dom: 'Bfrtip',
+        buttons: ['copy', 'csv', 'excel', 'pdf', 'print'],
+        columnDefs: [{ orderable: false, targets: 4 }]
+    });
+});
+</script>
+{% endblock %}

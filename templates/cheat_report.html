@@ -1,0 +1,546 @@
+{% extends 'professor_dashboard.html' %}
+{% block head %}
+<style>
+  /* ── Page Hero ── */
+  .cr-hero {
+    background: linear-gradient(135deg, #1a1d23 0%, #2d3142 100%);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .cr-hero-icon {
+    width: 52px; height: 52px;
+    background: linear-gradient(135deg, #ff6b6b, #e8622a);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem; color: #fff; flex-shrink: 0;
+  }
+  .cr-hero h1 { color: #fff; font-size: 1.3rem; font-weight: 700; margin: 0 0 3px; }
+  .cr-hero p  { color: rgba(255,255,255,0.55); margin: 0; font-size: 0.85rem; }
+  .cr-hero .badge-exam {
+    margin-left: auto;
+    background: rgba(232,98,42,0.25);
+    color: #ff9966;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    border: 1px solid rgba(232,98,42,0.4);
+  }
+
+  /* ── Summary Cards ── */
+  .cr-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .cr-stat-card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 18px 16px;
+    box-shadow: 0 3px 14px rgba(0,0,0,0.06);
+    text-align: center;
+  }
+  .cr-stat-card .stat-icon { font-size: 1.5rem; margin-bottom: 8px; }
+  .cr-stat-card .stat-val  { font-size: 1.7rem; font-weight: 800; line-height: 1; }
+  .cr-stat-card .stat-lbl  { font-size: 0.75rem; color: #888; margin-top: 4px; }
+
+  /* ── Risk Badge ── */
+  .badge-safe     { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+  .badge-moderate { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+  .badge-high     { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+  .risk-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+  }
+  .risk-dot {
+    display: inline-block;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    margin-right: 5px;
+  }
+  .dot-safe     { background: #28a745; }
+  .dot-moderate { background: #ffc107; }
+  .dot-high     { background: #dc3545; }
+
+  /* ── Table ── */
+  .cr-table-wrap {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 3px 18px rgba(0,0,0,0.06);
+    overflow-x: auto;
+    margin-bottom: 28px;
+  }
+  .cr-table-wrap h2 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #2d3142;
+    margin-bottom: 18px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  table.cr-table { width: 100%; border-collapse: collapse; }
+  table.cr-table th {
+    background: #f5f7fb;
+    color: #666;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 11px 14px;
+    text-align: left;
+    border-bottom: 2px solid #eee;
+  }
+  table.cr-table td {
+    padding: 13px 14px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.88rem;
+    color: #333;
+    vertical-align: middle;
+  }
+  table.cr-table tr:last-child td { border-bottom: none; }
+  table.cr-table tr:hover td { background: #fafbfc; }
+  .btn-detail {
+    padding: 5px 13px;
+    border-radius: 7px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border: 2px solid #e8622a;
+    color: #e8622a;
+    background: transparent;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.18s, color 0.18s;
+    display: inline-block;
+  }
+  .btn-detail:hover { background: #e8622a; color: #fff; text-decoration: none; }
+
+  /* ── Detail Panel ── */
+  .cr-detail-panel {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 3px 18px rgba(0,0,0,0.06);
+    margin-bottom: 24px;
+    overflow: hidden;
+    display: none;
+  }
+  .cr-detail-panel.active { display: block; }
+  .cr-detail-header {
+    background: linear-gradient(135deg, #2d3142, #3d4264);
+    padding: 20px 24px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .cr-detail-header .dh-avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #e8622a, #ff6b6b);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem; color: #fff; font-weight: 700;
+  }
+  .cr-detail-header h3 { color: #fff; font-size: 1rem; font-weight: 700; margin: 0 0 2px; }
+  .cr-detail-header span { color: rgba(255,255,255,0.6); font-size: 0.82rem; }
+  .cr-detail-close {
+    margin-left: auto;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: #fff;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .cr-detail-close:hover { background: rgba(255,255,255,0.25); }
+  .cr-detail-body { padding: 24px; }
+
+  /* Mini stats */
+  .cr-mini-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .cr-mini-card {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 13px 14px;
+    text-align: center;
+    border: 1px solid #eee;
+  }
+  .cr-mini-card .mc-val  { font-size: 1.5rem; font-weight: 800; }
+  .cr-mini-card .mc-lbl  { font-size: 0.72rem; color: #888; margin-top: 3px; }
+  .danger-val { color: #dc3545; }
+  .warn-val   { color: #ffc107; }
+  .ok-val     { color: #28a745; }
+
+  /* Tab switches */
+  .cr-tab-list { margin-top: 16px; }
+  .cr-tab-list h4 { font-size: 0.9rem; font-weight: 700; margin-bottom: 10px; color: #444; }
+  .tab-event-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    background: #fff8f6;
+    border-left: 3px solid #e8622a;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 6px;
+    font-size: 0.82rem;
+    color: #555;
+  }
+  .tab-event-item i { color: #e8622a; }
+
+  /* Snapshot gallery */
+  .cr-gallery-title { font-size: 0.9rem; font-weight: 700; color: #444; margin: 20px 0 10px; }
+  .cr-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .cr-snapshot {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 2px solid transparent;
+    transition: border-color 0.2s;
+    cursor: pointer;
+    position: relative;
+  }
+  .cr-snapshot.flagged { border-color: #dc3545; }
+  .cr-snapshot img { width: 100%; height: 130px; object-fit: cover; display: block; }
+  .cr-snap-label {
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    font-size: 0.68rem;
+    padding: 3px 6px;
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    text-align: center;
+  }
+  .cr-snap-flag {
+    position: absolute;
+    top: 5px; right: 5px;
+    background: #dc3545;
+    color: #fff;
+    border-radius: 50%;
+    width: 18px; height: 18px;
+    font-size: 0.55rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Lightbox */
+  #cr-lightbox {
+    display: none;
+    position: fixed; top:0; left:0; right:0; bottom:0;
+    background: rgba(0,0,0,0.88);
+    z-index: 9999;
+    align-items: center; justify-content: center;
+  }
+  #cr-lightbox.open { display: flex; }
+  #cr-lightbox img { max-width: 90vw; max-height: 85vh; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+  #cr-lightbox-close {
+    position: absolute; top: 20px; right: 26px;
+    color: #fff; font-size: 1.8rem; cursor: pointer; background: none; border: none;
+  }
+
+  /* Empty */
+  .cr-empty { text-align: center; padding: 60px 20px; color: #aaa; }
+  .cr-empty i { font-size: 3rem; margin-bottom: 12px; display: block; }
+  .cr-empty p { font-size: 0.95rem; }
+
+  /* Back link */
+  .cr-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: #888; font-size: 0.85rem; text-decoration: none;
+    margin-bottom: 18px; transition: color 0.2s;
+  }
+  .cr-back:hover { color: #e8622a; text-decoration: none; }
+
+  /* Legend */
+  .cr-legend {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    font-size: 0.82rem;
+    color: #666;
+    display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+  }
+  .cr-legend strong { color: #333; }
+</style>
+{% endblock %}
+{% block body %}
+
+<a href="{{ url_for('cheat_report') }}" class="cr-back" id="cr-back-link">
+  <i class="fas fa-arrow-left"></i> Pick another exam
+</a>
+
+<!-- Hero -->
+<div class="cr-hero">
+  <div class="cr-hero-icon"><i class="fas fa-shield-alt"></i></div>
+  <div>
+    <h1>Cheating Detection Report</h1>
+    <p>Exam ID: <strong style="color:#ff9966">{{ test_id }}</strong> &nbsp;·&nbsp; {{ total_students }} student(s) analysed</p>
+  </div>
+  <div class="badge-exam"><i class="fas fa-exclamation-triangle mr-1"></i>{{ flagged_count }} flagged</div>
+</div>
+
+<!-- Summary Stats -->
+<div class="cr-stats">
+  <div class="cr-stat-card">
+    <div class="stat-icon">👥</div>
+    <div class="stat-val" style="color:#2d3142">{{ total_students }}</div>
+    <div class="stat-lbl">Students</div>
+  </div>
+  <div class="cr-stat-card">
+    <div class="stat-icon">🔴</div>
+    <div class="stat-val" style="color:#dc3545">{{ high_risk }}</div>
+    <div class="stat-lbl">High Risk</div>
+  </div>
+  <div class="cr-stat-card">
+    <div class="stat-icon">🟡</div>
+    <div class="stat-val" style="color:#e09c00">{{ moderate_risk }}</div>
+    <div class="stat-lbl">Moderate Risk</div>
+  </div>
+  <div class="cr-stat-card">
+    <div class="stat-icon">🟢</div>
+    <div class="stat-val" style="color:#28a745">{{ safe_count }}</div>
+    <div class="stat-lbl">Safe</div>
+  </div>
+  <div class="cr-stat-card">
+    <div class="stat-icon">📱</div>
+    <div class="stat-val" style="color:#e8622a">{{ phone_total }}</div>
+    <div class="stat-lbl">Phone Detections</div>
+  </div>
+  <div class="cr-stat-card">
+    <div class="stat-icon">🪟</div>
+    <div class="stat-val" style="color:#6f42c1">{{ tab_total }}</div>
+    <div class="stat-lbl">Tab Switches</div>
+  </div>
+</div>
+
+<!-- Risk Legend -->
+<div class="cr-legend">
+  <strong>Risk Score:</strong>
+  <span><span class="risk-dot dot-safe"></span><strong>0–9</strong> Safe</span>
+  <span><span class="risk-dot dot-moderate"></span><strong>10–29</strong> Moderate</span>
+  <span><span class="risk-dot dot-high"></span><strong>30+</strong> High Risk</span>
+  <span style="margin-left:auto; color:#888;">Score = Phone×10 + Person×5 + Tab×3 + Head×1 + Eyes×1</span>
+</div>
+
+{% if students %}
+<!-- Student Table -->
+<div class="cr-table-wrap" id="cr-table-section">
+  <h2><i class="fas fa-list-ul"></i> Student Overview</h2>
+  <table class="cr-table" id="cheat-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Student</th>
+        <th>Email</th>
+        <th>Snapshots</th>
+        <th>Phone 📱</th>
+        <th>Multi-Person 👤</th>
+        <th>Head Movement</th>
+        <th>Eyes Off</th>
+        <th>Tab Switches 🪟</th>
+        <th>Risk Score</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in students %}
+      <tr id="row-{{ loop.index }}">
+        <td>{{ loop.index }}</td>
+        <td><strong>{{ s.name }}</strong></td>
+        <td style="color:#888; font-size:0.82rem;">{{ s.email }}</td>
+        <td>{{ s.total_snapshots }}</td>
+        <td>
+          {% if s.phone_flags > 0 %}
+            <span style="color:#dc3545; font-weight:700;">{{ s.phone_flags }}</span>
+          {% else %}
+            <span style="color:#28a745;">0</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s.person_flags > 0 %}
+            <span style="color:#dc3545; font-weight:700;">{{ s.person_flags }}</span>
+          {% else %}
+            <span style="color:#28a745;">0</span>
+          {% endif %}
+        </td>
+        <td>{{ s.head_flags }}</td>
+        <td>{{ s.eye_flags }}</td>
+        <td>
+          {% if s.tab_switches > 0 %}
+            <span style="color:#6f42c1; font-weight:700;">{{ s.tab_switches }}</span>
+          {% else %}0{% endif %}
+        </td>
+        <td><strong style="font-size:1rem;">{{ s.risk_score }}</strong></td>
+        <td>
+          {% if s.risk_level == 'High Risk' %}
+            <span class="risk-badge badge-high"><span class="risk-dot dot-high"></span>High Risk</span>
+          {% elif s.risk_level == 'Moderate' %}
+            <span class="risk-badge badge-moderate"><span class="risk-dot dot-moderate"></span>Moderate</span>
+          {% else %}
+            <span class="risk-badge badge-safe"><span class="risk-dot dot-safe"></span>Safe</span>
+          {% endif %}
+        </td>
+        <td>
+          <a href="#" class="btn-detail"
+             id="detail-btn-{{ loop.index }}"
+             onclick="showDetail('{{ s.email }}', '{{ s.name }}', {{ loop.index }}); return false;">
+            <i class="fas fa-eye mr-1"></i>Detail
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Detail Panel (populated by JS) -->
+<div class="cr-detail-panel" id="cr-detail-panel">
+  <div class="cr-detail-header">
+    <div class="dh-avatar" id="dh-avatar">?</div>
+    <div>
+      <h3 id="dh-name">—</h3>
+      <span id="dh-email">—</span>
+    </div>
+    <button class="cr-detail-close" onclick="closeDetail()" title="Close"><i class="fas fa-times"></i></button>
+  </div>
+  <div class="cr-detail-body" id="dh-body">
+    <div style="text-align:center; padding:40px; color:#aaa;">Loading...</div>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div id="cr-lightbox">
+  <button id="cr-lightbox-close" onclick="closeLightbox()"><i class="fas fa-times"></i></button>
+  <img id="cr-lightbox-img" src="" alt="Snapshot">
+</div>
+
+<script>
+/* ─── student data embedded from server ─── */
+var studentData = {{ students_json | safe }};
+var tabData     = {{ tabs_json | safe }};
+
+function showDetail(email, name, idx) {
+  var panel = document.getElementById('cr-detail-panel');
+  var initials = name.trim().split(' ').map(function(w){ return w[0]; }).join('').toUpperCase().substring(0,2);
+  document.getElementById('dh-avatar').textContent = initials;
+  document.getElementById('dh-name').textContent   = name;
+  document.getElementById('dh-email').textContent  = email;
+
+  var sd = null;
+  for (var i = 0; i < studentData.length; i++) {
+    if (studentData[i].email === email) { sd = studentData[i]; break; }
+  }
+  var tabs = [];
+  for (var j = 0; j < tabData.length; j++) {
+    if (tabData[j].email === email) { tabs = tabData[j].events; break; }
+  }
+
+  var body = document.getElementById('dh-body');
+  if (!sd) { body.innerHTML = '<p style="color:#aaa">No proctoring data found.</p>'; panel.classList.add('active'); scrollThere(); return; }
+
+  var phoneColor = sd.phone_flags > 0 ? 'danger-val' : 'ok-val';
+  var personColor= sd.person_flags > 0 ? 'danger-val' : 'ok-val';
+  var tabColor   = sd.tab_switches > 0 ? 'warn-val' : 'ok-val';
+
+  var html = '<div class="cr-mini-stats">'
+    + miniCard(sd.total_snapshots, 'Total Snapshots', 'ok-val', 'fa-camera')
+    + miniCard(sd.phone_flags, 'Phone Detected', phoneColor, 'fa-mobile-alt')
+    + miniCard(sd.person_flags, 'Multi-Person', personColor, 'fa-user-friends')
+    + miniCard(sd.head_flags, 'Head Movements', sd.head_flags > 10 ? 'warn-val' : 'ok-val', 'fa-arrows-alt')
+    + miniCard(sd.eye_flags, 'Eyes Off-Screen', sd.eye_flags > 10 ? 'warn-val' : 'ok-val', 'fa-eye-slash')
+    + miniCard(sd.tab_switches, 'Tab Switches', tabColor, 'fa-window-restore')
+    + miniCard(sd.risk_score, 'Risk Score', sd.risk_score >= 30 ? 'danger-val' : (sd.risk_score >= 10 ? 'warn-val' : 'ok-val'), 'fa-exclamation-triangle')
+    + '</div>';
+
+  /* Tab switch timeline */
+  if (tabs.length > 0) {
+    html += '<div class="cr-tab-list"><h4><i class="fas fa-window-restore" style="color:#e8622a"></i> Tab Switch Timeline</h4>';
+    for (var t = 0; t < tabs.length; t++) {
+      html += '<div class="tab-event-item"><i class="fas fa-external-link-alt"></i> Left exam window at <strong>' + tabs[t] + '</strong></div>';
+    }
+    html += '</div>';
+  }
+
+  /* Snapshot gallery */
+  if (sd.snapshots && sd.snapshots.length > 0) {
+    html += '<div class="cr-gallery-title"><i class="fas fa-images" style="color:#e8622a"></i> Captured Snapshots ('
+         + sd.snapshots.length + ')</div><div class="cr-gallery">';
+    for (var s = 0; s < sd.snapshots.length; s++) {
+      var snap = sd.snapshots[s];
+      var flagged = (snap.phone || snap.person || snap.eye_off || snap.head_turn) ? ' flagged' : '';
+      var flags = [];
+      if (snap.phone)     flags.push('📱');
+      if (snap.person)    flags.push('👤');
+      if (snap.eye_off)   flags.push('👁️');
+      if (snap.head_turn) flags.push('↔️');
+      var flagStr = flags.join(' ');
+      html += '<div class="cr-snapshot' + flagged + '" onclick="openLightbox(\'' + snap.img + '\')">'
+           + '<img src="data:image/jpeg;base64,' + snap.img + '" alt="snap" onerror="this.src=\'\'">'
+           + '<div class="cr-snap-label">' + snap.time + (flagStr ? ' ' + flagStr : '') + '</div>'
+           + (flagged ? '<div class="cr-snap-flag"><i class="fas fa-exclamation"></i></div>' : '')
+           + '</div>';
+    }
+    html += '</div>';
+  } else {
+    html += '<p style="color:#aaa; margin-top:16px; font-size:0.88rem;"><i class="fas fa-camera-slash mr-1"></i>No snapshot images stored for this student.</p>';
+  }
+
+  body.innerHTML = html;
+  panel.classList.add('active');
+  scrollThere();
+}
+
+function miniCard(val, label, colorClass, icon) {
+  return '<div class="cr-mini-card">'
+    + '<div style="font-size:1.2rem; margin-bottom:4px;"><i class="fas ' + icon + '"></i></div>'
+    + '<div class="mc-val ' + colorClass + '">' + val + '</div>'
+    + '<div class="mc-lbl">' + label + '</div>'
+    + '</div>';
+}
+
+function closeDetail() {
+  document.getElementById('cr-detail-panel').classList.remove('active');
+}
+
+function scrollThere() {
+  setTimeout(function() {
+    document.getElementById('cr-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 80);
+}
+
+function openLightbox(b64) {
+  document.getElementById('cr-lightbox-img').src = 'data:image/jpeg;base64,' + b64;
+  document.getElementById('cr-lightbox').classList.add('open');
+}
+function closeLightbox() {
+  document.getElementById('cr-lightbox').classList.remove('open');
+  document.getElementById('cr-lightbox-img').src = '';
+}
+document.getElementById('cr-lightbox').addEventListener('click', function(e) {
+  if (e.target === this) closeLightbox();
+});
+
+/* DataTable initialisation (only if loaded) */
+if (typeof $.fn.DataTable !== 'undefined') {
+  $(document).ready(function() {
+    $('#cheat-table').DataTable({
+      order: [[9, 'desc']],
+      pageLength: 25,
+      language: { search: "Search student:" }
+    });
+  });
+}
+</script>
+
+{% else %}
+<div class="cr-empty">
+  <i class="fas fa-user-slash"></i>
+  <p>No proctoring data found for exam <strong>{{ test_id }}</strong>.<br>
+     This exam may not have used proctoring, or no students have sat it yet.</p>
+</div>
+{% endif %}
+{% endblock %}

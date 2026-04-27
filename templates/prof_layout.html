@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MyProctor.ai</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/pixel.css') }}">
+    <link rel="stylesheet" 
+          href="{{ url_for('static', filename='vendor/@fortawesome/fontawesome-free/css/all.min.css') }}">
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        .sidebar {
+            width: 200px;
+            background-color: #1a1a2e;
+            height: 100vh;
+            position: fixed;
+            top: 0; left: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 0;
+            color: white;
+        }
+        .sidebar .brand {
+            font-size: 18px;
+            font-weight: bold;
+            padding: 10px 20px 20px 20px;
+            color: white;
+            border-bottom: 1px solid #333;
+            margin-bottom: 10px;
+        }
+        .sidebar a {
+            color: #ccc;
+            text-decoration: none;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        .sidebar a:hover { background: #333; color: white; }
+        .sidebar .dropdown-toggle-custom {
+            cursor: pointer;
+            color: #ccc;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        .sidebar .dropdown-toggle-custom:hover { background: #333; color: white; }
+        .sidebar .submenu {
+            display: none;
+            background: #111;
+            padding-left: 20px;
+        }
+        .sidebar .submenu a {
+            font-size: 13px;
+            padding: 8px 20px;
+        }
+        .sidebar .submenu.open { display: block; }
+        .sidebar-bottom {
+            margin-top: auto;
+            padding: 20px;
+        }
+        .logout-btn {
+            background: #e05c00;
+            color: white !important;
+            border-radius: 25px;
+            padding: 10px 20px !important;
+            text-align: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        .logout-btn:hover { background: #c44f00 !important; }
+        .main-content {
+            margin-left: 200px;
+            padding: 20px;
+        }
+        .divider {
+            border-top: 1px solid #333;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <div class="brand">MyProctor.ai</div>
+
+    <!-- Create Exam Dropdown -->
+    <div class="dropdown-toggle-custom" onclick="toggleMenu('createExamMenu')">
+        <i class="fas fa-plus"></i> Create Exam
+        <i class="fas fa-chevron-right" style="margin-left:auto" id="createExamArrow"></i>
+    </div>
+    <div class="submenu" id="createExamMenu">
+        <a href="/create_test"><i class="fas fa-list"></i> Objective</a>
+        <a href="/create_test_lqa"><i class="fas fa-pen"></i> Subjective</a>
+        <a href="/create_test_pqa"><i class="fas fa-code"></i> Practical</a>
+    </div>
+
+    <a href="/generate_test"><i class="fas fa-magic"></i> Generate Questions</a>
+    <a href="/viewquestions"><i class="fas fa-eye"></i> View Questions</a>
+    <a href="/updatedispques"><i class="fas fa-edit"></i> Update Questions</a>
+    <a href="/deldispques"><i class="fas fa-trash"></i> Delete Questions</a>
+    <a href="/{{ session['email'] }}/disptests"><i class="fas fa-history"></i> Exam History</a>
+    <a href="/livemonitoringtid"><i class="fas fa-video"></i> Live Monitoring</a>
+    <a href="/viewstudentslogs"><i class="fas fa-user-shield"></i> Student Monitoring</a>
+    <a href="/insertmarkstid">Insert Marks</a>
+
+    <div class="divider"></div>
+    <a href="/publish-results-testid"><i class="fas fa-bullhorn"></i> Publish Results</a>
+    <a href="/{{ session['email'] }}/tests-created"><i class="fas fa-chart-bar"></i> Results</a>
+    <a href="/report_professor"><i class="fas fa-flag"></i> Report Problem</a>
+    <a href="/changepassword_professor"><i class="fas fa-key"></i> Change Password</a>
+
+    <div class="sidebar-bottom">
+        <a href="#" class="logout-btn" onclick="logoutUser()">
+            <i class="fas fa-sign-out-alt"></i> Logout
+        </a>
+    </div>
+</div>
+
+<div class="main-content">
+    {% block body %}{% endblock %}
+</div>
+
+<script>
+function toggleMenu(menuId) {
+    const menu = document.getElementById(menuId);
+    const arrow = document.getElementById('createExamArrow');
+    menu.classList.toggle('open');
+    arrow.style.transform = menu.classList.contains('open') ? 'rotate(90deg)' : '';
+}
+
+function logoutUser() {
+    fetch('/logout', {method: 'POST'})
+    .then(() => window.location.href = '/');
+}
+</script>
+</body>
+</html>

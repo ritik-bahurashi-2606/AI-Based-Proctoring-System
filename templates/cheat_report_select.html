@@ -1,0 +1,99 @@
+{% extends 'professor_dashboard.html' %}
+{% block head %}
+<style>
+  .cr-hero {
+    background: linear-gradient(135deg, #1a1d23 0%, #2d3142 100%);
+    border-radius: 16px;
+    padding: 32px 36px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .cr-hero-icon {
+    width: 60px; height: 60px;
+    background: linear-gradient(135deg, #ff6b6b, #e8622a);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.6rem; color: #fff; flex-shrink: 0;
+  }
+  .cr-hero h1 { color: #fff; font-size: 1.5rem; font-weight: 700; margin: 0 0 4px; }
+  .cr-hero p  { color: rgba(255,255,255,0.6); margin: 0; font-size: 0.9rem; }
+
+  .cr-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+    padding: 36px;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+  .cr-card label { font-weight: 600; color: #2d3142; margin-bottom: 8px; display: block; }
+  .cr-card select {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e8edf4;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    color: #2d3142;
+    background: #f8fafc;
+    transition: border-color 0.2s;
+    appearance: none;
+    cursor: pointer;
+  }
+  .cr-card select:focus { border-color: #e8622a; outline: none; background: #fff; }
+  .cr-btn {
+    margin-top: 20px;
+    width: 100%;
+    padding: 13px;
+    background: linear-gradient(135deg, #e8622a, #ff6b6b);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.15s;
+    letter-spacing: 0.3px;
+  }
+  .cr-btn:hover { opacity: 0.92; transform: translateY(-1px); }
+  .cr-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: #999;
+  }
+  .cr-empty i { font-size: 3rem; margin-bottom: 16px; display: block; color: #ddd; }
+</style>
+{% endblock %}
+{% block body %}
+<div class="cr-hero">
+  <div class="cr-hero-icon"><i class="fas fa-shield-alt"></i></div>
+  <div>
+    <h1>Cheating Detection Report</h1>
+    <p>Select an exam to analyse and review suspicious student behaviour.</p>
+  </div>
+</div>
+
+{% if exams %}
+<div class="cr-card">
+  <form action="{{ url_for('cheat_report') }}" method="POST">
+    <label for="cr-exam-select">Choose Exam ID</label>
+    <select id="cr-exam-select" name="test_id" required>
+      {% for exam in exams %}
+      <option value="{{ exam['test_id'] }}">
+        {{ exam['test_id'] }} — {{ exam['subject'] }} / {{ exam['topic'] }} ({{ exam['test_type'] }})
+      </option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="cr-btn" id="cr-submit-btn">
+      <i class="fas fa-search mr-2"></i> View Cheating Report
+    </button>
+  </form>
+</div>
+{% else %}
+<div class="cr-card cr-empty">
+  <i class="fas fa-folder-open"></i>
+  <p>No exams found. Create an exam first before viewing cheating reports.</p>
+</div>
+{% endif %}
+{% endblock %}

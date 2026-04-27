@@ -1,0 +1,1 @@
+{"name": "Test User", "email": "testing123@example.com", "password": "password123", "user_type": "student", "image_hidden": "base64testdata", "otp": "97852", "otp_delivery_mode": "email", "created_at": 1776459164.341446}

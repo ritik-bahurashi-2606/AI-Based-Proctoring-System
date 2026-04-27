@@ -1,0 +1,56 @@
+{% extends 'student_dashboard.html' %}
+{% block body %}
+<div style="max-width: 700px; margin: 0 auto; text-align: center; padding-top: 40px;">
+
+    <!-- Welcome Card -->
+    <div style="background: white; border-radius: 16px; padding: 40px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); margin-bottom: 28px;">
+        <div style="font-size: 64px; margin-bottom: 16px;">🎓</div>
+        <h2 style="font-size: 26px; font-weight: 700; color: #1e293b; margin-bottom: 8px;">
+            Welcome back, {{ session.get('name', 'Student') }}!
+        </h2>
+        <p style="color: #64748b; font-size: 15px;">
+            You are logged in as a <strong>Student</strong> on MyProctor.ai
+        </p>
+    </div>
+
+    <!-- Quick Action Cards -->
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px;">
+
+        <a href="#" onclick="funStartExam(); return false;" style="text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #0f172a, #1e3a5f); border-radius: 12px; padding: 24px 16px; color: white; transition: transform .2s, box-shadow .2s;" onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 24px rgba(15,23,42,.35)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+                <div style="font-size: 28px; margin-bottom: 10px;">📝</div>
+                <div style="font-weight: 600; font-size: 14px;">Give Exam</div>
+                <div style="font-size: 11px; opacity: .7; margin-top: 4px;">Start a proctored test</div>
+            </div>
+        </a>
+
+        <a href="/{{ session.get('email','') }}/student_test_history" style="text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #0369a1, #0284c7); border-radius: 12px; padding: 24px 16px; color: white; transition: transform .2s, box-shadow .2s;" onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 24px rgba(3,105,161,.35)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+                <div style="font-size: 28px; margin-bottom: 10px;">📋</div>
+                <div style="font-weight: 600; font-size: 14px;">Exam History</div>
+                <div style="font-size: 11px; opacity: .7; margin-top: 4px;">View completed tests</div>
+            </div>
+        </a>
+
+        <a href="/{{ session.get('email','') }}/tests-given" style="text-decoration: none;">
+            <div style="background: linear-gradient(135deg, #059669, #047857); border-radius: 12px; padding: 24px 16px; color: white; transition: transform .2s, box-shadow .2s;" onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 24px rgba(5,150,105,.35)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+                <div style="font-size: 28px; margin-bottom: 10px;">📊</div>
+                <div style="font-weight: 600; font-size: 14px;">My Results</div>
+                <div style="font-size: 11px; opacity: .7; margin-top: 4px;">Check your scores</div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Info Banner -->
+    <div style="background: linear-gradient(135deg, #eff6ff, #dbeafe); border: 1px solid #bfdbfe; border-radius: 12px; padding: 18px 24px; text-align: left; display: flex; align-items: flex-start; gap: 14px;">
+        <span style="font-size: 24px; margin-top: 2px;">ℹ️</span>
+        <div>
+            <div style="font-weight: 600; color: #1e40af; font-size: 14px; margin-bottom: 4px;">Before taking an exam</div>
+            <div style="color: #1e3a8a; font-size: 13px; line-height: 1.6;">
+                Ensure your <strong>camera and microphone</strong> are enabled. Do not minimize the window or switch tabs during the exam. Only the calculator provided within the system may be used.
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

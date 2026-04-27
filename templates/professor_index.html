@@ -1,0 +1,16 @@
+{% extends 'prof_layout.html' %}
+{% block body %}
+<div class="container mt-5 text-center">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    <img src="{{ url_for('static', filename='assets/img/favicon/android-chrome-512x512.png') }}" 
+         style="width:200px;">
+    <h2>Welcome to MyProctor.ai</h2>
+    <h4>Hi Professor: {{ session['name'] }}</h4>
+</div>
+{% endblock %}

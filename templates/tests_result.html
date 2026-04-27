@@ -1,0 +1,59 @@
+{% extends 'student_dashboard.html' %}
+{% block body %}
+<div class="container mt-4">
+    <h3 class="mb-4"><i class="fas fa-poll-h"></i> Exam Results</h3>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    {% if results %}
+    <div class="card shadow">
+        <div class="card-body">
+            <table class="table table-bordered table-hover" id="resultsTable">
+                <thead class="thead-dark">
+                    <tr>
+                        <th>#</th>
+                        <th>Question</th>
+                        <th>A</th><th>B</th><th>C</th><th>D</th>
+                        <th>Your Answer</th>
+                        <th>Correct Answer</th>
+                        <th>Marks</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in results %}
+                    <tr class="{% if r.marked|upper == r.correct|upper %}table-success{% elif r.marked == '0' %}table-warning{% else %}table-danger{% endif %}">
+                        <td>{{ loop.index }}</td>
+                        <td>{{ r.q }}</td>
+                        <td>{{ r.a }}</td><td>{{ r.b }}</td><td>{{ r.c }}</td><td>{{ r.d }}</td>
+                        <td><strong>{{ r.marked if r.marked != '0' else 'Not Answered' }}</strong></td>
+                        <td><strong class="text-success">{{ r.correct }}</strong></td>
+                        <td>{{ r.marks }}</td>
+                        <td>
+                            {% if r.marked == '0' %}
+                                <span class="badge badge-warning">Skipped</span>
+                            {% elif r.marked|upper == r.correct|upper %}
+                                <span class="badge badge-success">Correct</span>
+                            {% else %}
+                                <span class="badge badge-danger">Wrong</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-info">No results available yet.</div>
+    {% endif %}
+    <a href="/{{ session.email }}/tests-given" class="btn btn-secondary mt-3"><i class="fas fa-arrow-left"></i> Back</a>
+</div>
+{% endblock %}
