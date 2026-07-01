@@ -99,6 +99,16 @@ mysql = MySQL(app)
 # Enable MySQL auto-reconnect and set connection options
 app.config.setdefault('MYSQL_AUTOCOMMIT', False)
 
+# Initialize global variables used for exam state (Note: sessions should be used instead in production)
+duration = 0
+marked_ans = "{}"
+calc = 0
+subject = ""
+topic = ""
+proctortype = 0
+proctortypes = 0
+proctortypep = 0
+
 
 # Flask-Login setup
 login_manager = LoginManager()
@@ -165,21 +175,16 @@ def is_mail_configured():
     return all(value and value not in MAIL_PLACEHOLDERS for value in required_values)
 
 
-def verify_face_match(captured_image_b64, stored_image_b64):
-    if captured_image_b64 in IMAGE_PLACEHOLDERS or stored_image_b64 in IMAGE_PLACEHOLDERS:
-        return False
-    try:
-        nparr1 = np.frombuffer(base64.b64decode(captured_image_b64), np.uint8)
-        nparr2 = np.frombuffer(base64.b64decode(stored_image_b64), np.uint8)
-        image1 = cv2.imdecode(nparr1, cv2.IMREAD_COLOR)
-        image2 = cv2.imdecode(nparr2, cv2.IMREAD_COLOR)
-        if image1 is None or image2 is None:
-            return False
-        img_result = DeepFace.verify(image1, image2, enforce_detection=False)
-        return bool(img_result.get("verified"))
-    except Exception as e:
-        app.logger.error(f'DeepFace verification error: {e}')
-        return False
+# ── Face verification ─────────────────────────────────────────────────────────
+# Import the full face_verifier module which provides score-based matching,
+# liveness detection, and quality assessment.
+try:
+    import face_verifier as _fv
+    FACE_VERIFIER_AVAILABLE = True
+except Exception as _fv_import_err:
+    app.logger.warning('face_verifier module not available: %s', _fv_import_err)
+    FACE_VERIFIER_AVAILABLE = False
+    _fv = None
 
 
 def clear_registration_session():
@@ -309,50 +314,229 @@ def student_dashboard():
 
 
 
-@app.route('/video_feed', methods=['GET','POST'])
+# ── Per-user/test cooldown tracking (in-memory, resets on server restart) ──────
+# Key: (uid, test_id, event_type)  →  last_logged_timestamp
+_proctor_cooldowns = {}
+_PROCTOR_COOLDOWN_SECS = float(os.getenv('PROCTOR_COOLDOWN_SECS', '10'))
+_AUDIO_EVIDENCE_DIR = os.path.join(BASE_DIR, 'audio_evidence')
+os.makedirs(_AUDIO_EVIDENCE_DIR, exist_ok=True)
+
+
+def _is_event_allowed(uid, test_id, event_type, cooldown=None):
+	"""Return True if enough time has passed since the last log for this event."""
+	cooldown = cooldown or _PROCTOR_COOLDOWN_SECS
+	key = (uid, test_id, event_type)
+	now = time.time()
+	if now - _proctor_cooldowns.get(key, 0) >= cooldown:
+		_proctor_cooldowns[key] = now
+		return True
+	return False
+
+
+def _is_normal_behavior(mob_status, person_status, user_move1, user_move2,
+                        eye_movements, voice_db_val):
+	"""Return True when nothing suspicious is happening at all."""
+	try:
+		vdb = float(voice_db_val)
+	except (TypeError, ValueError):
+		vdb = 0.0
+	phone_ok    = (mob_status == 0)
+	person_ok   = (person_status == 1)       # exactly one person
+	head_ok     = (user_move1 == 0 and user_move2 == 0)
+	gaze_ok     = (eye_movements in (0, 2))  # 0=not detected / 2=center
+	audio_ok    = (vdb < float(os.getenv('PROCTOR_AUDIO_THRESHOLD', '18')))
+	return phone_ok and person_ok and head_ok and gaze_ok and audio_ok
+
+
+@app.route('/video_feed', methods=['GET', 'POST'])
 @student_required
 def video_feed():
-	if request.method == "POST":
-		imgData = request.form['data[imgData]']
-		testid = request.form['data[testid]']
-		voice_db = request.form['data[voice_db]']
-		proctorData = camera.get_frame(imgData)
-		jpg_as_text = proctorData['jpg_as_text']
-		mob_status =proctorData['mob_status']
-		person_status = proctorData['person_status']
-		user_move1 = proctorData['user_move1']
-		user_move2 = proctorData['user_move2']
-		eye_movements = proctorData['eye_movements']
-		cur = mysql.connection.cursor()
-		results = cur.execute('INSERT INTO proctoring_log (email, name, test_id, voice_db, img_log, user_movements_updown, user_movements_lr, user_movements_eyes, phone_detection, person_status, uid) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
-			(dict(session)['email'], dict(session)['name'], testid, voice_db, jpg_as_text, user_move1, user_move2, eye_movements, mob_status, person_status,dict(session)['uid']))
-		mysql.connection.commit()
-		cur.close()
-		if(results > 0):
-			return jsonify({
-				"status": "success",
-				"mob_status": mob_status,
-				"person_status": person_status,
-				"user_move_updown": user_move1,
-				"user_move_lr": user_move2,
-				"eye_movements": eye_movements
-			})
-		else:
-			return jsonify({"status": "error", "message": "error in video"}), 500
+	if request.method == 'POST':
+		try:
+			imgData  = request.form['data[imgData]']
+			testid   = request.form['data[testid]']
+			voice_db = request.form['data[voice_db]']
+		except KeyError as ke:
+			return jsonify({'status': 'error', 'message': f'Missing field: {ke}'}), 400
 
-@app.route('/window_event', methods=['GET','POST'])
+		# ── Run CV pipeline ───────────────────────────────────────────────────
+		try:
+			proctorData = camera.get_frame(imgData)
+		except Exception as cam_err:
+			app.logger.error('camera.get_frame error: %s', cam_err)
+			return jsonify({'status': 'error', 'message': 'Camera processing failed.'}), 500
+
+		jpg_as_text   = proctorData['jpg_as_text']
+		mob_status    = proctorData['mob_status']
+		person_status = proctorData['person_status']
+		user_move1    = proctorData['user_move1']
+		user_move2    = proctorData['user_move2']
+		eye_movements = proctorData['eye_movements']
+
+		uid   = session.get('uid')
+		email = session.get('email')
+		name  = session.get('name')
+
+		try:
+			vdb_val = float(voice_db)
+		except (ValueError, TypeError):
+			vdb_val = 0.0
+
+		# ── Temporal smart evaluation (head+gaze history, cooldowns) ──────────
+		import proctoring_policy as pp
+		user_key = f"{uid}_{testid}"
+		policy   = pp.evaluate_proctoring_event(user_key, proctorData, vdb_val, imgData)
+
+		warnings         = policy['warnings']      # all events (for toasts)
+		logged_events    = policy['events']         # cooldown-filtered events to log
+		audio_suspicious = policy['audio_suspicious']
+		should_log       = policy['should_log']
+
+		# ── DB logging: one row per suspicious event batch ───────────────────
+		logged  = False
+		log_pid = None
+		if should_log and logged_events:
+			# Store screenshot only for high-risk events
+			HIGH_RISK = {'mobile_phone','multiple_persons','student_absent',
+			             'suspicious_audio','face_fully_out_of_frame'}
+			store_img = jpg_as_text if any(
+				e['event_type'] in HIGH_RISK for e in logged_events) else ''
+
+			dominant = logged_events[0]['event_type']
+			try:
+				cur  = mysql.connection.cursor()
+				rows = cur.execute(
+					'INSERT INTO proctoring_log '
+					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
+					'user_movements_lr, user_movements_eyes, phone_detection, person_status, uid) '
+					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+					(email, name, testid, vdb_val, store_img,
+					 user_move1, user_move2, eye_movements,
+					 mob_status, person_status, uid),
+				)
+				mysql.connection.commit()
+				log_pid = cur.lastrowid
+				cur.close()
+				logged = (rows > 0)
+				app.logger.info(
+					'Proctoring log: uid=%s test=%s event=%s yaw=%.1f pitch=%.1f eyes=%d',
+					uid, testid, dominant,
+					proctorData.get('head_yaw', 0),
+					proctorData.get('head_pitch', 0),
+					eye_movements,
+				)
+			except Exception as db_err:
+				app.logger.error('proctoring_log insert error: %s', db_err)
+				try:
+					mysql.connection.rollback()
+				except Exception:
+					pass
+
+		return jsonify({
+			'status':           'success',
+			'logged':           logged,
+			'pid':              log_pid,
+			'mob_status':       mob_status,
+			'person_status':    person_status,
+			'user_move_updown': user_move1,
+			'user_move_lr':     user_move2,
+			'eye_movements':    eye_movements,
+			'head_yaw':         proctorData.get('head_yaw', 0),
+			'head_pitch':       proctorData.get('head_pitch', 0),
+			'head_confidence':  proctorData.get('head_confidence', 0),
+			'gaze_confidence':  proctorData.get('gaze_confidence', 0),
+			'audio_suspicious': audio_suspicious,
+			'warnings':         warnings,
+		})
+
+	return jsonify({'status': 'error', 'message': 'POST required'}), 405
+
+
+@app.route('/upload_audio_evidence', methods=['POST'])
+@student_required
+def upload_audio_evidence():
+	"""Receive an audio blob from the browser and store it linked to a log entry."""
+	try:
+		testid     = request.form.get('testid', '').strip()
+		event_type = request.form.get('event_type', 'suspicious_audio').strip()
+		pid        = request.form.get('pid', '').strip()
+		audio_file = request.files.get('audio')
+
+		if not audio_file or not testid:
+			return jsonify({'status': 'error', 'message': 'Missing audio or testid'}), 400
+
+		uid   = session.get('uid', 'unknown')
+		ts    = int(time.time())
+		fname = f"exam_{testid}_uid_{uid}_{ts}.webm"
+		fpath = os.path.join(_AUDIO_EVIDENCE_DIR, fname)
+		audio_file.save(fpath)
+
+		# Link audio file path to the proctoring_log row if pid is known
+		if pid:
+			try:
+				cur = mysql.connection.cursor()
+				# Try to store path – column audio_evidence may not exist yet, handle gracefully
+				cur.execute(
+					'UPDATE proctoring_log SET audio_evidence = %s '
+					'WHERE id = %s AND uid = %s',
+					(fname, pid, uid),
+				)
+				mysql.connection.commit()
+				cur.close()
+			except Exception as db_err:
+				app.logger.warning('audio_evidence column update failed (column may not exist): %s', db_err)
+				try:
+					mysql.connection.rollback()
+				except Exception:
+					pass
+
+		app.logger.info('Audio evidence saved: %s (pid=%s, uid=%s, test=%s)', fname, pid, uid, testid)
+		return jsonify({'status': 'success', 'file': fname})
+
+	except Exception as ae:
+		app.logger.error('upload_audio_evidence error: %s', ae)
+		return jsonify({'status': 'error', 'message': 'Audio upload failed.'}), 500
+
+@app.route('/window_event', methods=['GET', 'POST'])
 @student_required
 def window_event():
-	if request.method == "POST":
-		testid = request.form['testid']
-		cur = mysql.connection.cursor()
-		results = cur.execute('INSERT INTO window_estimation_log (email, test_id, name, window_event, uid) values(%s,%s,%s,%s,%s)', (dict(session)['email'], testid, dict(session)['name'], 1, dict(session)['uid']))
-		mysql.connection.commit()
-		cur.close()
-		if(results > 0):
-			return "recorded window"
-		else:
-			return "error in window"
+	if request.method == 'POST':
+		try:
+			testid     = request.form.get('testid', '').strip()
+			event_type = request.form.get('event_type', 'tab_switch').strip()
+			if not testid:
+				return jsonify({'status': 'error', 'message': 'Missing testid'}), 400
+
+			# Use proctoring_policy cooldown so tab-switch spam is dampened
+			import proctoring_policy as pp
+			uid = session.get('uid')
+			pol = pp.evaluate_window_event(f"{uid}_{testid}", event_type)
+
+			if pol['should_log']:
+				cur = mysql.connection.cursor()
+				cur.execute(
+					'INSERT INTO window_estimation_log '
+					'(email, test_id, name, window_event, uid) '
+					'VALUES (%s,%s,%s,%s,%s)',
+					(session.get('email'), testid, session.get('name'), 1, uid),
+				)
+				mysql.connection.commit()
+				cur.close()
+				app.logger.info('window_event logged: uid=%s test=%s type=%s', uid, testid, event_type)
+
+			return jsonify({
+				'status':   'success',
+				'logged':   pol['should_log'],
+				'warnings': pol.get('warnings', []),
+			})
+		except Exception as we:
+			app.logger.error('window_event error: %s', we)
+			try:
+				mysql.connection.rollback()
+			except Exception:
+				pass
+			return jsonify({'status': 'error', 'message': str(we)}), 500
+	return jsonify({'status': 'error', 'message': 'POST required'}), 405
 
 @app.route('/create-checkout-session', methods=['POST'])
 def create_checkout_session():
@@ -636,25 +820,70 @@ def register():
 		if 'eotp' in request.form or 'registration_id' in request.form:
 			return verifyEmail()
 
-		name = request.form.get('name', '').strip()
-		email = request.form.get('email', '').strip()
+		name     = request.form.get('name', '').strip()
+		email    = request.form.get('email', '').strip()
 		password = request.form.get('password', '').strip()
 		user_type = request.form.get('user_type', 'student').strip()
-		imgdata = request.form.get('image_hidden', '').strip()
-		# Log what we received for debugging
-		print(f"DEBUG: name='{name}' email='{email}' imgdata_len={len(imgdata)}")
-		app.logger.info(f'Register POST: name={bool(name)}, email={bool(email)}, password={bool(password)}, user_type={user_type!r}, imgdata_len={len(imgdata)}')
-		# Validate individual fields with specific messages
+		imgdata  = request.form.get('image_hidden', '').strip()
+
+		app.logger.info(
+			'Register POST: name=%s, email=%s, user_type=%r, imgdata_len=%d',
+			bool(name), bool(email), user_type, len(imgdata),
+		)
+
+		# ── Field presence & format validation ──────────────────────────
 		if not name:
-			return render_template('register.html', error='Please enter your name.')
+			return render_template('register.html', error='Full name is required. Please enter your name.', field='name')
+		if len(name) < 2:
+			return render_template('register.html', error='Name must be at least 2 characters long.', field='name')
 		if not email:
-			return render_template('register.html', error='Please enter your email address.')
+			return render_template('register.html', error='Email address is required.', field='email')
+		# Basic email format check (the browser type=email also catches this)
+		if '@' not in email or '.' not in email.split('@')[-1]:
+			return render_template('register.html', error='Invalid email format. Please enter a valid email address (e.g. user@example.com).', field='email')
 		if not password:
-			return render_template('register.html', error='Please enter a password.')
+			return render_template('register.html', error='Password is required.', field='password')
+		if len(password) < 8:
+			return render_template('register.html', error='Password must be at least 8 characters long. Please choose a stronger password.', field='password')
 		if not user_type:
 			user_type = 'student'
-		if not imgdata:
-			return render_template('register.html', error='Please capture your photo before registering. Click the "Capture Image" button first, then click Register.')
+
+		# ── Mandatory face capture ───────────────────────────────────────
+		if not imgdata or imgdata in ('no_camera', ''):
+			return render_template(
+				'register.html',
+				error='A live face photo is required to register. Please allow camera access, complete the liveness check, and try again.',
+				field='face',
+			)
+
+		# ── Liveness + quality check ─────────────────────────────────────
+		if FACE_VERIFIER_AVAILABLE:
+			try:
+				capture_result = _fv.validate_registration_capture(imgdata)
+			except Exception as fv_err:
+				app.logger.error('Face verifier exception during registration: %s', fv_err)
+				capture_result = {'ok': False, 'message': 'Face verification encountered an error. Please retake your photo and try again.'}
+			if not capture_result['ok']:
+				app.logger.info('Registration face capture rejected: %s', capture_result['message'])
+				return render_template('register.html', error=capture_result['message'], field='face')
+		else:
+			app.logger.warning('face_verifier unavailable — skipping liveness check for registration.')
+
+		# ── Check for duplicate email ────────────────────────────────────
+		try:
+			cur = mysql.connection.cursor()
+			dup = cur.execute('SELECT uid FROM users WHERE email = %s', (email,))
+			cur.close()
+			if dup > 0:
+				return render_template(
+					'register.html',
+					error='This email is already registered. Please use a different email or log in to your existing account.',
+					field='email',
+				)
+		except Exception as dup_err:
+			app.logger.warning('Duplicate email check error: %s', dup_err)
+
+		# ── OTP flow ─────────────────────────────────────────────────────
 		sesOTP = generateOTP()
 		if not is_mail_configured():
 			app.logger.warning('Registration OTP email skipped because mail settings are incomplete.')
@@ -666,8 +895,8 @@ def register():
 				registration_id=registration_id,
 				dev_otp=sesOTP,
 			)
-		msg1 = Message('MyProctor.ai - OTP Verification', sender = sender, recipients = [email])
-		msg1.body = "New Account opening - Your OTP Verfication code is "+sesOTP+"."
+		msg1 = Message('MyProctor.ai - OTP Verification', sender=sender, recipients=[email])
+		msg1.body = 'New Account opening — Your OTP Verification code is ' + sesOTP + '.'
 		try:
 			mail.send(msg1)
 		except Exception:
@@ -687,8 +916,7 @@ def register():
 		return render_verify_email(registration_id=registration_id)
 	return render_template('register.html')
 
-def new_func(name, email, imgdata):
-    return f"DEBUG: name='{name}' email='{email}' imgdata_len={len(imgdata)}"
+# (debug stub removed)
 
 @app.route('/login', methods=['GET','POST'])
 def login():
@@ -697,33 +925,61 @@ def login():
 		password_candidate = request.form.get('password', '').strip()
 		user_type = request.form.get('user_type', '').strip()
 		imgdata1 = request.form.get('image_hidden', '').strip()
-		# Allow login without photo - no_camera skips face verification
-		photo_skipped = (imgdata1 in ['', 'no_camera'])
+
+		# ── Face photo is mandatory ──────────────────────────────────────
+		if not imgdata1 or imgdata1 == 'no_camera':
+			return render_template(
+				'login.html',
+				error='Face verification is required to log in. Please allow camera access and capture your photo.',
+			)
+
 		try:
 			cur = mysql.connection.cursor()
 			results1 = cur.execute(
-				'SELECT uid, name, email, password, user_type, user_image, user_login from users where email = %s and user_type = %s',
-				(email, user_type)
+				'SELECT uid, name, email, password, user_type, user_image, user_login FROM users WHERE email = %s AND user_type = %s',
+				(email, user_type),
 			)
 			if results1 > 0:
 				cresults = cur.fetchone()
-				imgdata2 = cresults['user_image']
-				password = cresults['password']
+				stored_img = cresults['user_image']
+				db_password = cresults['password']
 				name = cresults['name']
 				uid = cresults['uid']
-				password_matches = (password == password_candidate)
-				if not password_matches:
+
+				# ── Password check ──────────────────────────────────────
+				if db_password != password_candidate:
 					cur.close()
 					return render_template('login.html', error='Invalid password. Please try again.')
-				# Face verification: skip if photo not provided OR stored image unavailable
-				face_ok = True
-				if not photo_skipped and imgdata2 not in IMAGE_PLACEHOLDERS:
-					face_ok = verify_face_match(imgdata1, imgdata2)
-					if not face_ok:
+
+				# ── Face verification (score-based, 66 % threshold) ───────
+				if FACE_VERIFIER_AVAILABLE:
+					face_result = _fv.verify_face_match_result(imgdata1, stored_img)
+					if not face_result['ok']:
 						cur.close()
-						return render_template('login.html', error='Face verification failed. Capture a clear photo or click "Skip Photo" to login with password only.')
-				# All checks passed - log user in
-				cur.execute('UPDATE users set user_login = 1 where email = %s and uid = %s', (email, uid))
+						app.logger.info(
+							'Login face match failed for %s: %s', email, face_result['message']
+						)
+						return render_template('login.html', error=face_result['message'])
+				else:
+					# Fallback: basic DeepFace check if face_verifier unavailable
+					app.logger.warning('face_verifier unavailable — falling back to basic DeepFace check.')
+					if stored_img not in IMAGE_PLACEHOLDERS:
+						try:
+							np1 = np.frombuffer(base64.b64decode(imgdata1), np.uint8)
+							np2 = np.frombuffer(base64.b64decode(stored_img), np.uint8)
+							im1 = cv2.imdecode(np1, cv2.IMREAD_COLOR)
+							im2 = cv2.imdecode(np2, cv2.IMREAD_COLOR)
+							res = DeepFace.verify(im1, im2, enforce_detection=False)
+							if not res.get('verified'):
+								cur.close()
+								return render_template('login.html', error='Face verification failed. Please try again with a clearer photo.')
+						except Exception as df_err:
+							app.logger.error('DeepFace fallback error: %s', df_err)
+							cur.close()
+							return render_template('login.html', error='Face verification could not be completed. Please try again.')
+
+				# ── All checks passed – create session ────────────────────
+				cur.execute('UPDATE users SET user_login = 1 WHERE email = %s AND uid = %s', (email, uid))
 				mysql.connection.commit()
 				cur.close()
 				user = User(uid, name, email, user_type)
@@ -733,17 +989,40 @@ def login():
 				session['uid'] = uid
 				session['name'] = name
 				session['user_role'] = 'teacher' if user_type == 'teacher' else user_type
-				if user_type == "student":
+				if user_type == 'student':
 					return redirect(url_for('student_index'))
-				else:
-					return redirect(url_for('professor_index'))
+				return redirect(url_for('professor_index'))
 			else:
 				cur.close()
-				return render_template('login.html', error='Email not found for the selected user type. Check your email and user type selection.')
+				return render_template(
+					'login.html',
+					error='Email not found for the selected user type. Check your email and user type selection.',
+				)
 		except Exception as login_err:
-			app.logger.error(f'Login error: {login_err}')
+			app.logger.error('Login error: %s', login_err)
 			return render_template('login.html', error='A login error occurred. Please try again.')
 	return render_template('login.html')
+
+
+@app.route('/api/face_quality_check', methods=['POST'])
+def api_face_quality_check():
+	"""Client-side pre-flight quality check during registration.
+	POST JSON: {"image": "<base64>"}
+	Returns JSON: {"ok": bool, "message": str, ...}
+	"""
+	if not FACE_VERIFIER_AVAILABLE:
+		return jsonify({"ok": True, "message": "Quality check unavailable — proceeding."})
+	try:
+		payload = request.get_json(force=True, silent=True) or {}
+		img_b64 = payload.get('image', '').strip()
+		if not img_b64:
+			return jsonify({"ok": False, "message": "No image provided."})
+		img_bgr = _fv._b64_to_bgr(img_b64)
+		result = _fv.assess_face_capture(img_bgr, require_liveness=True)
+		return jsonify(result)
+	except Exception as qc_err:
+		app.logger.warning('face_quality_check error: %s', qc_err)
+		return jsonify({"ok": False, "message": "Quality check failed. Please retake the photo."})
 
 
 @app.route('/verifyEmail', methods=['GET','POST'])
@@ -768,26 +1047,66 @@ def verifyEmail():
 		dbPassword = registration_data['password']
 		dbUser_type = registration_data['user_type']
 		dbImgdata = registration_data['image_hidden']
-		if(theOTP == mOTP):
+		if theOTP == mOTP:
+			_cur = None
 			try:
-				cur = mysql.connection.cursor()
-				ar = cur.execute('INSERT INTO users(name, email, password, user_type, user_image, user_login) values(%s,%s,%s,%s,%s,%s)', (dbName, dbEmail, dbPassword, dbUser_type, dbImgdata,0))
+				_cur = mysql.connection.cursor()
+				ar = _cur.execute(
+					'INSERT INTO users(name, email, password, user_type, user_image, user_login) '
+					'VALUES (%s, %s, %s, %s, %s, %s)',
+					(dbName, dbEmail, dbPassword, dbUser_type, dbImgdata, 0),
+				)
 				mysql.connection.commit()
 				if ar > 0:
 					delete_pending_registration(registration_id)
 					clear_registration_session()
-					flash("Thanks for registering! You are sucessfully verified!.")
-					return  redirect(url_for('login'))
+					flash('Registration successful! Welcome to MyProctor.ai. Please sign in.', 'success')
+					return redirect(url_for('login'))
 				else:
-					flash("Database insertion failed. Please try again.")
-					return  redirect(url_for('login')) 
+					# INSERT ran but affected 0 rows — very unusual
+					app.logger.error('verifyEmail: INSERT returned 0 rows for email=%s', dbEmail)
+					return render_verify_email(
+						error='Registration could not be completed (no rows inserted). Please try again or contact support.',
+						registration_id=registration_id,
+					)
 			except Exception as db_err:
-				app.logger.error(f"Database error in verifyEmail: {db_err}")
-				flash("Database error during registration. Please contact admin or try again later.")
-				return redirect(url_for('register'))
+				# ── Classify the DB error and show a specific message ──────
+				err_str  = str(db_err).lower()
+				err_code = getattr(db_err, 'args', [None])[0] if hasattr(db_err, 'args') else None
+				app.logger.error('Database error in verifyEmail (errno=%s): %s', err_code, db_err)
+
+				if err_code == 1062 or 'duplicate entry' in err_str or 'duplicate' in err_str:
+					if 'email' in err_str:
+						user_msg = 'This email is already registered. Please use a different email or log in to your existing account.'
+					elif 'name' in err_str:
+						user_msg = 'This username is already taken. Please choose a different name.'
+					else:
+						user_msg = 'An account with these details already exists. Please log in or use different credentials.'
+				elif err_code == 1045 or 'access denied' in err_str:
+					user_msg = 'Database access error. Please contact the administrator.'
+				elif err_code in (2003, 2006, 2013) or 'lost connection' in err_str or "can't connect" in err_str:
+					user_msg = 'Database connection failed. Please try again in a few moments.'
+				elif err_code == 1406 or 'data too long' in err_str:
+					user_msg = 'One of your inputs is too long. Please shorten your name or email and try again.'
+				elif err_code == 1048 or "cannot be null" in err_str:
+					user_msg = 'A required field is missing. Please fill in all fields and try again.'
+				else:
+					user_msg = 'Registration failed due to a server error. Please try again later or contact support.'
+
+				try:
+					mysql.connection.rollback()
+				except Exception:
+					pass
+				return render_verify_email(
+					error=user_msg,
+					registration_id=registration_id,
+				)
 			finally:
-				if 'cur' in locals():
-					cur.close()
+				if _cur is not None:
+					try:
+						_cur.close()
+					except Exception:
+						pass
 		else:
 			return render_verify_email(
 				error="OTP is incorrect.",
@@ -1848,7 +2167,7 @@ def give_test():
 			cresults = cur1.fetchone()
 			imgdata2 = cresults['user_image']
 			cur1.close()
-			if verify_face_match(imgdata1, imgdata2):
+			if _fv and _fv.verify_face_match(imgdata1, imgdata2):
 				cur = mysql.connection.cursor()
 				results = cur.execute('SELECT * from teachers where test_id = %s', [test_id])
 				if results > 0:
@@ -1882,10 +2201,10 @@ def give_test():
 											results = cur.fetchall()
 											for row in results:
 												print(row['qid'])
-												qiddb = ""+row['qid']
+												qiddb = str(row['qid'])
 												print(qiddb)
 												marked_ans[qiddb] = row['ans']
-												marked_ans = json.dumps(marked_ans)
+											marked_ans = json.dumps(marked_ans)
 								else:
 									flash('Exam already given', 'success')
 									return redirect(url_for('give_test'))
@@ -1957,7 +2276,7 @@ def test(testid):
 				cur = mysql.connection.cursor()
 				results = cur.execute('SELECT * from students where test_id =%s and qid = %s and email = %s', (testid, qid, session['email']))
 				if results > 0:
-					cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s', (testid, qid, session['email']))
+					cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s', (ans, testid, qid, session['email']))
 					mysql.connection.commit()
 					cur.close()
 				else:
@@ -2602,8 +2921,7 @@ def cheat_report():
         # 2. Aggregate window_estimation_log per student
         cur.execute(
             '''
-            SELECT email, COUNT(*) AS tab_switches,
-                   GROUP_CONCAT(transaction_log ORDER BY transaction_log SEPARATOR '||') AS ts_times
+            SELECT email, COUNT(*) AS tab_switches
             FROM window_estimation_log
             WHERE test_id = %s
             GROUP BY email
@@ -2688,9 +3006,7 @@ def cheat_report():
         # Build tab timeline data for JS
         tabs_js = []
         for email, tinfo in tab_rows.items():
-            raw = tinfo.get('ts_times', '') or ''
-            events = [t.strip() for t in raw.split('||') if t.strip()] if raw else []
-            tabs_js.append({'email': email, 'events': events})
+            tabs_js.append({'email': email, 'events': []})
 
         # Summary counters
         total_students = len(students)

@@ -14,14 +14,8 @@ function mySnackBar() {
     setTimeout(function(){ x.className = x.className.replace("show", ""); }, 10000);
   }
 
-window.onfocus = function(event) {
-    mySnackBar();
-    $.ajax({
-                  data : {'testid': tid},
-                  type: "POST",
-                  url: "/window_event"   
-                });
-};
+// NOTE: Tab-switch and blur events are handled by proctoring_common.js
+// The onfocus handler was incorrectly logging window events — removed.
 
   var stream = document.getElementById("stream");
   var capture = document.getElementById("capture");
@@ -31,109 +25,97 @@ window.onfocus = function(event) {
   var values = 0;
   var length = null;
 
+  /**
+   * startStreaming() — delegates to proctoring_common.js which handles
+   * camera, microphone, audio analysis and all track lifecycle warnings.
+   */
   function startStreaming() {
-  
-    var mediaSupport = 'mediaDevices' in navigator;
-    navigator.getUserMedia = navigator.getUserMedia ||
-    navigator.webkitGetUserMedia ||
-    navigator.mozGetUserMedia;
-
-    if( mediaSupport && null == cameraStream ) {
-      navigator.mediaDevices.getUserMedia( { video: true, audio: true } )
-      .then( function( mediaStream ) {
-        cameraStream = mediaStream;
-        stream.srcObject = mediaStream;
-        stream.play();
-        audioContext = new AudioContext();
-        analyser = audioContext.createAnalyser();
-        microphone = audioContext.createMediaStreamSource(mediaStream);
-        javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
-  
-        analyser.smoothingTimeConstant = 0.8;
-        analyser.fftSize = 1024;
-  
-        microphone.connect(analyser);
-        analyser.connect(javascriptNode);
-        javascriptNode.connect(audioContext.destination);
-  
-        javascriptNode.onaudioprocess = function() {
-            array = new Uint8Array(analyser.frequencyBinCount);
-            analyser.getByteFrequencyData(array);
-            values = 0;
-    
-            length = array.length;
-            for (var i = 0; i < length; i++) {
-              values += (array[i]);
-            }
-        }
-      })
-      .catch( function( err ) {
-        console.log("Unable to access camera: " + err);
-      });
-    }
-    else {
-      alert('Your browser does not support media devices.');
+    if (typeof window.startStreaming === 'function' && window.startStreaming !== startStreaming) {
+      window.startStreaming();
       return;
     }
+    // Fallback: basic camera access when proctoring_common.js not loaded
+    var mediaSupport = 'mediaDevices' in navigator;
+    if (mediaSupport && null == cameraStream) {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then(function(mediaStream) {
+          cameraStream = mediaStream;
+          var streamEl = document.getElementById('stream');
+          if (streamEl) { streamEl.srcObject = mediaStream; streamEl.play(); }
+        })
+        .catch(function(err) { console.error('Camera error:', err); });
+    }
   }
-  
+
   function stopStreaming() {
-  
-    if( null != cameraStream ) {
-      var track = cameraStream.getTracks()[ 0 ];
-      track.stop();
-      stream.load();
+    if (null != cameraStream) {
+      cameraStream.getTracks().forEach(function(t) { t.stop(); });
       cameraStream = null;
     }
   }
-  
+
   function captureSnapshot() {
-  
-    if( null != cameraStream ) {
-      var ctx = capture.getContext( '2d' );
-      var img = new Image();
-      ctx.drawImage( stream, 0, 0, capture.width, capture.height );
-      img.src = capture.toDataURL( "image/png" );
-      img.width	= 340;
-      var d1 = capture.toDataURL("image/png");
-      var res = d1.replace("data:image/png;base64,", "");
+    var streamEl = document.getElementById('stream');
+    var captureEl = document.getElementById('capture');
+    // Use cameraStream from proctoring_common.js scope if available
+    var activeStream = (typeof window._proctoringStream !== 'undefined')
+                       ? window._proctoringStream : cameraStream;
 
-        var average = values / length || 0;
+    if (activeStream && streamEl && captureEl) {
+      var ctx = captureEl.getContext('2d');
+      ctx.drawImage(streamEl, 0, 0, captureEl.width, captureEl.height);
+      var dataUrl = captureEl.toDataURL('image/jpeg', 0.82);
+      var b64 = dataUrl.replace(/^data:image\/(jpeg|jpg|png);base64,/, '');
 
-        console.log(average)
-        console.log(Math.round(average - 40));
+      var avgAudio = (typeof values !== 'undefined' && typeof length !== 'undefined' && length)
+                     ? (values / length) : 0;
 
-        // Always post frame even if audio isn't active
-        $.post("/video_feed",{
-            data : {'imgData':res,'voice_db':average,'testid': tid}},
-                function(response){
-                    console.log(response);
-                    // REAL-TIME WARNING LOGIC
-                        if (response.status === "success") {
-                            let warnings = [];
-                            if (response.mob_status == 1) warnings.push("📱 Mobile Phone Detected!");
-                            if (response.person_status == 0) warnings.push("👤 No Person Detected!");
-                            if (response.person_status == 2) warnings.push("👥 Multiple People Detected!");
-                            if (response.user_move_lr != 0) warnings.push("↔️ Looking Sideways Detected!");
-                            if (response.user_move_updown != 0) warnings.push("↕️ Looking Up/Down Detected!");
-                            if (response.eye_movements != 0 && response.eye_movements != 2 && response.eye_movements != "Normal") warnings.push("👁️ Eye Gaze Suspicious!");
+      $.ajax({
+        url: '/video_feed',
+        type: 'POST',
+        dataType: 'json',
+        data: { data: { imgData: b64, voice_db: avgAudio, testid: tid } },
+        success: function(response) {
+          if (!response || response.status !== 'success') return;
 
-                            if (warnings.length > 0) {
-                                Swal.fire({
-                                    title: 'Proctoring Warning!',
-                                    html: '<div style="text-align: left;">' + warnings.join("<br>") + '</div>',
-                                    icon: 'error',
-                                    timer: 3000,
-                                    showConfirmButton: false,
-                                    toast: true,
-                                    position: 'top-end'
-                                });
-                            }
-                        }
+          // ── Process server warnings (new structured format) ────────────
+          var warnings = response.warnings || [];
+          warnings.forEach(function(ev) {
+            if (ev && ev.message) {
+              // showProctorWarning is provided by proctoring_common.js
+              if (typeof showProctorWarning === 'function') {
+                showProctorWarning(ev.message, ev.event_type);
+              } else if (window.Swal) {
+                Swal.fire({
+                  toast: true, position: 'top-end', icon: 'warning',
+                  title: ev.message, showConfirmButton: false,
+                  timer: 4000, timerProgressBar: true
                 });
-      } 
-      setTimeout(captureSnapshot, 2000); // Fixed: Increased frequency to 2 seconds for continuous monitoring
+              }
+            }
+          });
+
+          // ── Trigger audio recording if server flagged suspicious audio ─
+          if (response.audio_suspicious) {
+            if (typeof startAudioEvidenceRecording === 'function') {
+              startAudioEvidenceRecording();
+            }
+          }
+
+          // Debug log (remove in production)
+          if (response.logged) {
+            console.info('[Proctor] Event logged. pid=' + response.pid +
+              ' yaw=' + response.head_yaw + ' pitch=' + response.head_pitch +
+              ' eyes=' + response.eye_movements);
+          }
+        },
+        error: function(xhr, status, err) {
+          console.warn('[Proctor] video_feed failed:', status, err);
+        }
+      });
     }
+    setTimeout(captureSnapshot, 2000);
+  }
 
 $(document).ready( function() {
     var url = window.location.href;

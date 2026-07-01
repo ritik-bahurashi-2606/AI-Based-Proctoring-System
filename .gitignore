@@ -53,3 +53,14 @@ flask_session/
 
 # Logs
 *.log
+
+# Large data files
+*.dat
+
+# Application Data
+.gemini/
+registration_tokens/
+
+# Temporary / Scratch Files
+diff_appjs.txt
+patch_templates.py

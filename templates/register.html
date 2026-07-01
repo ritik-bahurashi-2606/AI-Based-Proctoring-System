@@ -1,180 +1,519 @@
 {% extends 'layout.html' %}
 {% block body %}
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+<style>
+/* ── Field error highlight ──────────────────────────────────── */
+.field-error .form-control,
+.field-error .custom-select { border-color:#dc3545 !important; box-shadow:0 0 0 .2rem rgba(220,53,69,.18) !important; }
+.field-error .field-msg { display:block !important; }
+.field-msg { display:none; font-size:.8rem; color:#dc3545; margin-top:3px; }
+.field-ok .form-control,
+.field-ok .custom-select { border-color:#28a745 !important; }
+
+/* ── Password strength bar ──────────────────────────────────── */
+#pwd-strength-bar { height:5px; border-radius:4px; transition:all .35s; background:#e9ecef; margin-top:5px; }
+#pwd-strength-bar .bar-fill { height:100%; border-radius:4px; width:0; transition:width .35s, background .35s; }
+#pwd-strength-label { font-size:.75rem; margin-top:2px; }
+
+/* ── Loading overlay ────────────────────────────────────────── */
+#loading-overlay {
+  display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+  z-index:9999; align-items:center; justify-content:center; flex-direction:column;
+}
+#loading-overlay.active { display:flex; }
+#loading-overlay .spinner-text { color:#fff; margin-top:14px; font-size:1rem; }
+
+/* ── Error alert icon ───────────────────────────────────────── */
+.alert-icon { font-size:1.15rem; margin-right:6px; vertical-align:middle; }
+</style>
+
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <div class="spinner-border text-light" style="width:3rem;height:3rem;" role="status"></div>
+  <div class="spinner-text" id="loading-text">Submitting registration…</div>
+</div>
+
 <main>
- <section class="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
-            <div class="container">
-                    <div class="col-12 d-flex align-items-center justify-content-center">
-                        <div class="bg-white shadow-soft border rounded border-light p-4 p-lg-5 w-100 fmxw-650">
-                            <div class="text-center text-md-center mb-4 mt-md-0">
-                                <h1 class="mb-0 h3">Create an Account</h1>
-                            </div>
-							<img src="{{ url_for('static', filename='personal_information.png') }}">
-                            <div class="card-body">
-                                {% if error %}
-                                <div class="alert alert-danger shadow-soft" role="alert">
-                                    {{ error }}
-                                </div>
-                                {% endif %}
-							    <form action="/register" method="POST" class="mt-4" id="registerForm" enctype="multipart/form-data" onsubmit="return validateForm()">
-                                    <div class="form-group">
-                                      <label for="email">EMAIL</label>
-                                      <div class="input-group mb-4">
-                                          <div class="input-group-prepend">
-                                              <span class="input-group-text"><span class="fas fa-envelope"></span></span>
-                                          </div>
-                                          <input name="email" type="email" class="form-control" id="email" placeholder="example@company.com" aria-label="email address" required>   
-                                      </div>
-                                  </div>
-                                  <div class="form-group">
-                                    <label for="name">NAME</label>
-                                    <div class="input-group mb-4">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><span class="fas fa-user"></span></span>
-                                        </div>
-                                        <input name="name" class="form-control" id="name" placeholder="John Doe" type="text" required>
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                  <label for="password">PASSWORD</label>
-                                  <div class="input-group mb-4">
-                                      <div class="input-group-prepend">
-                                          <span class="input-group-text"><span class="fas fa-unlock-alt"></span></span>
-                                      </div>
-                                      <input name="password" type="text" class="form-control" id="password" style="-webkit-text-security:disc;" placeholder="Password" aria-label="Password" required>
-                                  </div>
-                              </div>
-                            <div class="form-group">
-                                <label class="my-1 mr-2" for="inlineFormCustomSelectPref">Choose User Type</label>
-                                <select class="custom-select my-1 mr-sm-2" id="inlineFormCustomSelectPref" name="user_type" required>
-                                    <option value="student">Student</option>
-                                    <option value="teacher">Professor</option>
-                                </select>
-                            </div>
-                            <div class="form-group">''
-                            <div id="camera-status"></div>
-                            <video id="stream" width="370" height="320" autoplay playsinline muted></video>
-                               <canvas id="capture" width="370" height="320" style="display:none;">
-                                </canvas>
-                            
-                              <br>
-                                <button id="btn-capture" type="button" class="btn btn-primary justify-content-center">Capture Image</button>
-                            <br><br>
-                                <div id="snapshot"></div>
-                            <input type="hidden" id="image_hidden" name="image_hidden">
-                            </div>
-      <input type="submit" class="btn btn-primary form-group justify-content-center" value="Register">
-    </form>
-    <p>Already have an account?
-        <a href="/login" >Click here</a>.
-      </p>
+<section class="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
+  <div class="container">
+    <div class="col-12 d-flex align-items-center justify-content-center">
+      <div class="bg-white shadow-soft border rounded border-light p-4 p-lg-5 w-100 fmxw-650">
+
+        <div class="text-center mb-4">
+          <h1 class="mb-0 h3"><i class="fas fa-user-plus mr-2 text-primary"></i>Create an Account</h1>
+          <p class="text-muted small mt-1">Liveness verification is required during registration.</p>
+        </div>
+
+        <div class="card-body">
+          <!-- ── Server-side error banner ────────────────────── -->
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for cat, msg in messages %}
+              <div class="alert alert-{{ cat }} shadow-soft d-flex align-items-start" role="alert">
+                <i class="fas fa-info-circle alert-icon mt-1"></i><span>{{ msg }}</span>
+              </div>
+            {% endfor %}
+          {% endwith %}
+
+          {% if error %}
+          <div class="alert alert-danger shadow-soft d-flex align-items-start" role="alert" id="server-error-box">
+            <i class="fas fa-exclamation-circle alert-icon mt-1"></i>
+            <div>
+              <strong>Registration failed:</strong> {{ error }}
+              {% if field == 'face' %}
+              <br><small>💡 Tip: Ensure good lighting, look straight at the camera, and avoid glasses glare.</small>
+              {% elif field == 'password' %}
+              <br><small>💡 Tip: Use at least 8 characters with a mix of letters and numbers.</small>
+              {% elif field == 'email' %}
+              <br><small>💡 Tip: Check the email format (e.g. name@domain.com) or try logging in if you already have an account.</small>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+
+          <form action="/register" method="POST" id="registerForm"
+                enctype="multipart/form-data" onsubmit="return validateForm(event)">
+
+            <!-- ── Email ──────────────────────────────────────── -->
+            <div class="form-group" id="grp-email"
+                 {% if field == 'email' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
+              <label for="email">EMAIL</label>
+              <div class="input-group mb-1">
+                <div class="input-group-prepend">
+                  <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+                </div>
+                <input name="email" type="email" class="form-control {% if field=='email' %}is-invalid{% endif %}"
+                       id="email" placeholder="example@company.com"
+                       oninput="validateEmail(this)" required>
+              </div>
+              <small class="field-msg" id="email-msg"></small>
+            </div>
+
+            <!-- ── Full Name ──────────────────────────────────── -->
+            <div class="form-group" id="grp-name"
+                 {% if field == 'name' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
+              <label for="name">FULL NAME</label>
+              <div class="input-group mb-1">
+                <div class="input-group-prepend">
+                  <span class="input-group-text"><i class="fas fa-user"></i></span>
+                </div>
+                <input name="name" type="text" class="form-control {% if field=='name' %}is-invalid{% endif %}"
+                       id="name" placeholder="John Doe"
+                       oninput="validateName(this)" required>
+              </div>
+              <small class="field-msg" id="name-msg"></small>
+            </div>
+
+            <!-- ── Password + strength meter ─────────────────── -->
+            <div class="form-group" id="grp-password"
+                 {% if field == 'password' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
+              <label for="password">PASSWORD</label>
+              <div class="input-group mb-1">
+                <div class="input-group-prepend">
+                  <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                </div>
+                <input name="password" type="password" class="form-control {% if field=='password' %}is-invalid{% endif %}"
+                       id="password" placeholder="Min. 8 characters"
+                       oninput="checkPasswordStrength(this.value)" required>
+                <div class="input-group-append">
+                  <button type="button" class="btn btn-outline-secondary btn-sm px-2"
+                          onclick="togglePwd()" title="Show/hide password">
+                    <i class="fas fa-eye" id="pwd-eye"></i>
+                  </button>
+                </div>
+              </div>
+              <div id="pwd-strength-bar"><div class="bar-fill" id="bar-fill"></div></div>
+              <div id="pwd-strength-label" class="text-muted"></div>
+              <small class="field-msg" id="password-msg"></small>
+            </div>
+
+            <!-- ── User Type ──────────────────────────────────── -->
+            <div class="form-group">
+              <label for="user_type_sel">USER TYPE</label>
+              <select class="custom-select" id="user_type_sel" name="user_type" required>
+                <option value="student">Student</option>
+                <option value="teacher">Professor</option>
+              </select>
+            </div>
+
+            <!-- ── Live Face Capture ──────────────────────────── -->
+            <div class="form-group mt-3" id="grp-face"
+                 {% if field == 'face' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
+              <label><i class="fas fa-id-card mr-1"></i>Live Face Capture
+                <span class="badge badge-danger ml-1">Required</span>
+              </label>
+
+              <!-- Inline quality/liveness feedback -->
+              <div id="quality-banner" class="alert py-2 mb-2 d-flex align-items-start"
+                   role="alert" style="font-size:.83rem; display:none !important;">
+                <i class="fas fa-circle mr-2 mt-1" id="qb-icon"></i>
+                <span id="qb-text"></span>
+              </div>
+
+              <div id="face-scan-box" style="position:relative; background:#0d1117;
+                   border-radius:12px; overflow:hidden;
+                   border:2px solid {% if field=='face' %}#dc3545{% else %}#28a745{% endif %};">
+                <video id="stream" width="100%" height="270" autoplay playsinline muted
+                       style="display:block; border-radius:10px;"></video>
+                <canvas id="mp-canvas" style="position:absolute;top:0;left:0;
+                         width:100%;height:100%;pointer-events:none;"></canvas>
+                <div id="scan-hud" style="position:absolute;bottom:0;left:0;right:0;
+                     background:rgba(0,0,0,.7);color:#4fc3f7;font-size:.77rem;
+                     padding:6px;font-family:monospace;letter-spacing:1px;">
+                  <i class="fas fa-spinner fa-spin"></i>
+                  <span id="hud-text">Starting liveness scanner…</span>
+                </div>
+              </div>
+
+              <div id="snapshot" class="mt-2"></div>
+              <div id="camera-status" class="small mt-1"></div>
+
+              <div class="alert alert-warning py-2 mt-2 mb-1" style="font-size:.81rem;">
+                <i class="fas fa-exclamation-triangle mr-1"></i>
+                <strong>Liveness required:</strong> Only your <em>live face</em> is accepted —
+                no photos or screenshots. Ensure good lighting and face the camera directly.
+              </div>
+
+              <div class="d-flex mt-2">
+                <button id="btn-capture" type="button" class="btn btn-success flex-fill"
+                        onclick="captureAndCheck()" disabled>
+                  <i class="fas fa-camera mr-1"></i>Capture &amp; Verify
+                </button>
+              </div>
+              <small class="text-muted d-block mt-1">
+                Wait for face detection, then click <strong>Capture &amp; Verify</strong>.
+              </small>
+              <small class="field-msg" id="face-msg">A verified face photo is required to register.</small>
+              <input type="hidden" id="image_hidden" name="image_hidden">
+            </div>
+
+            <button type="submit" id="btn-register" class="btn btn-primary btn-block mt-3">
+              <i class="fas fa-user-plus mr-1"></i>Create Account
+            </button>
+          </form>
+
+          <p class="mt-3 text-center">Already have an account?
+            <a href="/login" class="font-weight-bold">Sign in</a>.
+          </p>
+        </div>
+      </div>
+    </div>
   </div>
-  <div>
-  </div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
 </section>
 </main>
+
 <script>
-    var btnCapture = document.getElementById("btn-capture");
-    var stream = document.getElementById("stream");
-    var capture = document.getElementById("capture");
-    var snapshot = document.getElementById("snapshot");
-    var cameraStream = null;
-    var imageCaptured = false;
+/* ── Global state ──────────────────────────────────────────────────────────── */
+var videoEl      = document.getElementById('stream');
+var mpCanvas     = document.getElementById('mp-canvas');
+var ctx2d        = mpCanvas.getContext('2d');
+var hudText      = document.getElementById('hud-text');
+var btnCapture   = document.getElementById('btn-capture');
+var snapshotDiv  = document.getElementById('snapshot');
+var cameraStatus = document.getElementById('camera-status');
 
-    btnCapture.addEventListener("click", captureSnapshot);
+var cameraStream  = null;
+var imageCaptured = false;
+var faceDetected  = false;
+var faceMesh      = null;
+var mpReady       = false;
+var mpFrameTimer  = null;
+var isProcessing  = false;
 
-    function startStreaming() {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            alert('Your browser does not support camera access. Please use Chrome or Firefox.');
-            return;
-        }
+/* ── Quality banner ────────────────────────────────────────────────────────── */
+function showBanner(ok, msg) {
+  var b = document.getElementById('quality-banner');
+  var ic = document.getElementById('qb-icon');
+  var tx = document.getElementById('qb-text');
+  b.style.display = 'flex';
+  if (ok === null) {          // info/loading
+    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-info';
+    ic.className = 'fas fa-spinner fa-spin mr-2 mt-1';
+  } else if (ok) {            // success
+    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-success';
+    ic.className = 'fas fa-check-circle mr-2 mt-1';
+  } else {                    // failure
+    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-danger';
+    ic.className = 'fas fa-times-circle mr-2 mt-1';
+  }
+  tx.textContent = msg;
+}
+function hideBanner() { document.getElementById('quality-banner').style.display = 'none'; }
 
-        navigator.mediaDevices.getUserMedia({ video: true })
-        .then(function(mediaStream) {
-            cameraStream = mediaStream;
-            stream.srcObject = mediaStream;
-            stream.play();
-            console.log("Camera started successfully");
-        })
-        .catch(function(err) {
-            console.log("Camera error: " + err);
-            // ✅ KEY FIX: Show a message but don't block registration
-            document.getElementById("camera-status").innerHTML = 
-                '<div class="alert alert-warning">⚠️ Camera not available. You can still register — admin will verify manually.</div>';
-            // Set a dummy placeholder so image_hidden is not empty
-            document.getElementById("image_hidden").value = "no_camera";
-            imageCaptured = true;
-        });
+/* ── Inline field helpers ──────────────────────────────────────────────────── */
+function setFieldError(id, msg) {
+  var msgEl = document.getElementById(id + '-msg');
+  var el    = document.getElementById(id);
+  if (el) { el.classList.add('is-invalid'); el.classList.remove('is-valid'); }
+  if (msgEl) { msgEl.style.display = 'block'; msgEl.textContent = msg; }
+}
+function setFieldOk(id) {
+  var msgEl = document.getElementById(id + '-msg');
+  var el    = document.getElementById(id);
+  if (el) { el.classList.remove('is-invalid'); el.classList.add('is-valid'); }
+  if (msgEl) { msgEl.style.display = 'none'; }
+}
+function clearField(id) {
+  var msgEl = document.getElementById(id + '-msg');
+  var el    = document.getElementById(id);
+  if (el) { el.classList.remove('is-invalid','is-valid'); }
+  if (msgEl) { msgEl.style.display = 'none'; }
+}
+
+/* ── Real-time field validators ────────────────────────────────────────────── */
+function validateEmail(el) {
+  var v = el.value.trim();
+  if (!v) { setFieldError('email','Email is required.'); return false; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+    setFieldError('email','Invalid email format (e.g. user@example.com).');
+    return false;
+  }
+  setFieldOk('email'); return true;
+}
+function validateName(el) {
+  var v = el.value.trim();
+  if (!v)      { setFieldError('name','Full name is required.'); return false; }
+  if (v.length < 2) { setFieldError('name','Name must be at least 2 characters.'); return false; }
+  setFieldOk('name'); return true;
+}
+
+/* ── Password strength meter ───────────────────────────────────────────────── */
+function togglePwd() {
+  var f = document.getElementById('password');
+  var e = document.getElementById('pwd-eye');
+  if (f.type === 'password') { f.type = 'text';  e.className = 'fas fa-eye-slash'; }
+  else                       { f.type = 'password'; e.className = 'fas fa-eye'; }
+}
+function checkPasswordStrength(val) {
+  var fill  = document.getElementById('bar-fill');
+  var label = document.getElementById('pwd-strength-label');
+  var msgEl = document.getElementById('password-msg');
+  if (!val) { fill.style.width='0'; fill.style.background=''; label.textContent=''; return; }
+  var score = 0;
+  if (val.length >= 8)  score++;
+  if (val.length >= 12) score++;
+  if (/[A-Z]/.test(val)) score++;
+  if (/[0-9]/.test(val)) score++;
+  if (/[^A-Za-z0-9]/.test(val)) score++;
+  var widths = ['20%','35%','55%','75%','100%'];
+  var colors = ['#dc3545','#fd7e14','#ffc107','#20c997','#28a745'];
+  var labels = ['Very weak','Weak','Fair','Strong','Very strong'];
+  fill.style.width     = widths[score-1] || '0';
+  fill.style.background= colors[score-1] || '#e9ecef';
+  label.textContent    = labels[score-1] || '';
+  label.style.color    = colors[score-1] || '';
+  if (val.length < 8) {
+    msgEl.style.display = 'block';
+    msgEl.textContent   = 'Password must be at least 8 characters.';
+  } else {
+    msgEl.style.display = 'none';
+  }
+}
+
+/* ── MediaPipe face mesh ───────────────────────────────────────────────────── */
+function initMediaPipe() {
+  try {
+    faceMesh = new FaceMesh({ locateFile: function(f) {
+      return 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/' + f;
+    }});
+    faceMesh.setOptions({ maxNumFaces:1, refineLandmarks:true,
+      minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
+    faceMesh.onResults(onFaceMeshResults);
+    mpReady = true;
+  } catch(e) {
+    console.warn('MediaPipe unavailable:', e);
+    faceDetected = true;
+    btnCapture.disabled = false;
+    hudText.innerHTML = '<i class="fas fa-camera"></i> Ready — Click Capture & Verify';
+  }
+}
+function onFaceMeshResults(res) {
+  mpCanvas.width  = videoEl.videoWidth  || videoEl.offsetWidth;
+  mpCanvas.height = videoEl.videoHeight || videoEl.offsetHeight;
+  ctx2d.clearRect(0, 0, mpCanvas.width, mpCanvas.height);
+  if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+    faceDetected = true;
+    btnCapture.disabled = false;
+    hudText.innerHTML = '<i class="fas fa-check-circle" style="color:#4caf50"></i> Live face detected — Click Capture & Verify';
+    drawMesh(res.multiFaceLandmarks[0]);
+  } else {
+    faceDetected = false;
+    btnCapture.disabled = true;
+    hudText.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#ff9800"></i> No face — position yourself in the frame';
+  }
+}
+function drawMesh(lms) {
+  var W = mpCanvas.width, H = mpCanvas.height;
+  ctx2d.fillStyle = 'rgba(79,195,247,.55)';
+  for (var i = 0; i < lms.length; i++) {
+    ctx2d.beginPath(); ctx2d.arc(lms[i].x*W, lms[i].y*H, 1.2, 0, 2*Math.PI); ctx2d.fill();
+  }
+  [33,7,163,144,145,153,154,155,133,362,382,381,380,374,373,390,249,263].forEach(function(idx) {
+    ctx2d.fillStyle = 'rgba(0,255,200,.95)';
+    ctx2d.beginPath(); ctx2d.arc(lms[idx].x*W, lms[idx].y*H, 2.8, 0, 2*Math.PI); ctx2d.fill();
+  });
+}
+async function processFrame() {
+  if (faceMesh && mpReady && videoEl.readyState >= 2 && !isProcessing) {
+    isProcessing = true;
+    try { await faceMesh.send({image: videoEl}); } catch(e) {}
+    isProcessing = false;
+  }
+  mpFrameTimer = requestAnimationFrame(processFrame);
+}
+
+/* ── Camera startup ────────────────────────────────────────────────────────── */
+function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    cameraStatus.innerHTML = '<span class="text-danger"><i class="fas fa-times-circle mr-1"></i>Camera not supported. Please use Chrome or Firefox.</span>';
+    setFieldError('face', 'Camera access is required for registration. Please use Chrome or Firefox.');
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({ video:{width:640,height:480,facingMode:'user'}, audio:false })
+    .then(function(ms) {
+      cameraStream = ms;
+      videoEl.srcObject = ms;
+      videoEl.play();
+      hudText.innerHTML = '<i class="fas fa-search"></i> Scanning for live face…';
+      initMediaPipe();
+      processFrame();
+    })
+    .catch(function(err) {
+      var msg = 'Camera permission is required for registration. ';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        msg += 'You denied camera access — please allow it in your browser settings and reload.';
+      } else if (err.name === 'NotFoundError') {
+        msg += 'No camera was found on this device.';
+      } else {
+        msg += 'Camera blocked or unavailable (' + err.name + '). Please reload and try again.';
+      }
+      cameraStatus.innerHTML = '<span class="text-danger"><i class="fas fa-times-circle mr-1"></i>' + msg + '</span>';
+      hudText.innerHTML = '<i class="fas fa-times-circle"></i> Camera unavailable';
+      setFieldError('face', msg);
+    });
+}
+
+/* ── Capture + server quality/liveness check ───────────────────────────────── */
+function captureAndCheck() {
+  if (!cameraStream) { setFieldError('face','Camera not available. Please allow camera access and reload.'); return; }
+  if (!faceDetected) { setFieldError('face','No face detected. Position your face clearly in the camera.'); return; }
+
+  var off = document.createElement('canvas');
+  off.width = 320; off.height = 240;
+  off.getContext('2d').drawImage(videoEl, 0, 0, 320, 240);
+  var dataURL = off.toDataURL('image/jpeg', 0.85);
+  var b64     = dataURL.replace('data:image/jpeg;base64,', '');
+
+  btnCapture.disabled = true;
+  btnCapture.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Verifying…';
+  showBanner(null, 'Checking face quality and liveness — please wait…');
+
+  fetch('/api/face_quality_check', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({image: b64})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(res) {
+    if (res.ok) {
+      showBanner(true, res.message || 'Live face accepted — click Create Account to continue.');
+      document.getElementById('image_hidden').value = b64;
+      imageCaptured = true;
+      clearField('face');
+
+      var img = new Image(); img.src = dataURL;
+      img.style.cssText = 'width:100%;border-radius:8px;margin-top:6px;';
+      snapshotDiv.innerHTML = '';
+      snapshotDiv.appendChild(img);
+      snapshotDiv.insertAdjacentHTML('beforeend',
+        '<p class="text-success small mt-1"><i class="fas fa-check mr-1"></i>Liveness verified. Click <strong>Create Account</strong>.</p>');
+
+      videoEl.style.display = 'none';
+      if (mpFrameTimer) { cancelAnimationFrame(mpFrameTimer); mpFrameTimer = null; }
+      ctx2d.clearRect(0,0,mpCanvas.width,mpCanvas.height);
+      document.getElementById('scan-hud').style.display = 'none';
+
+      btnCapture.innerHTML = '<i class="fas fa-redo mr-1"></i>Retake Photo';
+      btnCapture.className = 'btn btn-warning flex-fill';
+      btnCapture.disabled  = false;
+      btnCapture.onclick   = resetCapture;
+    } else {
+      /* Show specific rejection reason inline */
+      showBanner(false, res.message || 'Face check failed. Please retake the photo.');
+      setFieldError('face', res.message || 'Face verification failed. Please retake the photo.');
+      btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i>Retake Photo';
+      btnCapture.className = 'btn btn-danger flex-fill';
+      btnCapture.disabled  = false;
+      btnCapture.onclick   = captureAndCheck;
     }
+  })
+  .catch(function() {
+    /* Network error — accept optimistically; server will re-validate on submit */
+    showBanner(true, 'Quality check unavailable — photo accepted. Server will verify on submit.');
+    document.getElementById('image_hidden').value = b64;
+    imageCaptured = true;
+    btnCapture.innerHTML = '<i class="fas fa-redo mr-1"></i>Retake Photo';
+    btnCapture.className = 'btn btn-warning flex-fill';
+    btnCapture.disabled  = false;
+    btnCapture.onclick   = resetCapture;
+  });
+}
 
-    function captureSnapshot() {
-        if (null != cameraStream) {
-            var ctx = capture.getContext('2d');
-            var img = new Image();
+function resetCapture() {
+  videoEl.style.display = 'block';
+  snapshotDiv.innerHTML = '';
+  imageCaptured = false;
+  document.getElementById('image_hidden').value = '';
+  hideBanner();
+  clearField('face');
+  btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i>Capture & Verify';
+  btnCapture.className = 'btn btn-success flex-fill';
+  btnCapture.disabled  = !faceDetected;
+  btnCapture.onclick   = captureAndCheck;
+  document.getElementById('scan-hud').style.display = 'block';
+  if (!mpFrameTimer) processFrame();
+}
 
-            ctx.drawImage(stream, 0, 0, capture.width, capture.height);
+/* ── Form validation before submit ────────────────────────────────────────── */
+function validateForm(e) {
+  var emailEl = document.getElementById('email');
+  var nameEl  = document.getElementById('name');
+  var pwdEl   = document.getElementById('password');
+  var img     = document.getElementById('image_hidden').value;
 
-            img.src = capture.toDataURL("image/png");
-            img.width = 370;
-            img.height = 320;
+  var ok = true;
 
-            snapshot.innerHTML = '';
-            snapshot.appendChild(img);
+  if (!validateEmail(emailEl)) ok = false;
+  if (!validateName(nameEl))   ok = false;
 
-            var d1 = capture.toDataURL("image/png");
-            var res = d1.replace("data:image/png;base64,", "");
+  var pwd = pwdEl.value.trim();
+  if (!pwd) {
+    setFieldError('password','Password is required.'); ok = false;
+  } else if (pwd.length < 8) {
+    setFieldError('password','Password must be at least 8 characters.'); ok = false;
+  } else {
+    setFieldOk('password');
+  }
 
-            snapshot.innerHTML = '';
-            snapshot.appendChild(img);
+  if (!imageCaptured || !img || img === '' || img === 'no_camera') {
+    setFieldError('face','A verified live face photo is required. Click "Capture & Verify" first.');
+    showBanner(false, 'Face photo is missing. Please complete the liveness check above.');
+    ok = false;
+  }
 
-            $("#image_hidden").val(res);
-            imageCaptured = true;
+  if (!ok) {
+    /* Scroll to first error */
+    var first = document.querySelector('.is-invalid, .field-msg[style*="block"]');
+    if (first) first.closest('.form-group, .input-group') && first.scrollIntoView({behavior:'smooth', block:'center'});
+    return false;
+  }
 
-            $("#btn-capture").text("✅ Image Captured! Click to Recapture")
-                             .removeClass("btn-primary")
-                             .addClass("btn-success");
-        } else {
-            // ✅ KEY FIX: If camera not available, still allow registration
-            alert('Camera not started. If you have no camera, you can still register.');
-            document.getElementById("image_hidden").value = "no_camera";
-            imageCaptured = true;
-            $("#btn-capture").text("✅ Skipped (No Camera)")
-                             .removeClass("btn-primary")
-                             .addClass("btn-warning");
-        }
-    }
+  /* Show loading overlay */
+  document.getElementById('loading-text').textContent = 'Verifying and creating your account…';
+  document.getElementById('loading-overlay').classList.add('active');
+  document.getElementById('btn-register').disabled = true;
+  return true;
+}
 
-    function validateForm() {
-        var name = document.getElementById("name").value.trim();
-        var email = document.getElementById("email").value.trim();
-        var password = document.getElementById("password").value.trim();
-
-        if (!name) {
-            alert('Please enter your name.');
-            return false;
-        }
-        if (!email) {
-            alert('Please enter your email.');
-            return false;
-        }
-        if (!password) {
-            alert('Please enter your password.');
-            return false;
-        }
-        if (!imageCaptured || $("#image_hidden").val() === '') {
-            alert('Please click the "Capture Image" button first.');
-            return false;
-        }
-        return true;
-    }
-
-    window.onload = function() {
-        startStreaming();
-    }
+window.onload = function() { startCamera(); };
 </script>
 {% endblock %}
