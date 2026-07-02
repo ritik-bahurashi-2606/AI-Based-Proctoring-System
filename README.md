@@ -1,71 +1,129 @@
-# MyProctor.ai - AI Based Online Examination & Proctoring System
+# AI-Based Proctoring System
 
-MyProctor.ai is a state-of-the-art online examination platform equipped with powerful AI proctoring. It monitors students in real-time, detecting suspicious activities such as mobile phone usage, multiple people in the frame, and suspicious eye/head movements.
+AI-Based Proctoring System is a Flask web application for conducting online examinations with automated proctoring. It combines exam management, student authentication, live camera monitoring, face validation, gaze/head movement checks, object detection, and instructor-facing malpractice reports.
 
-## 🚀 Features
+## Features
 
-- **AI Proctoring:** Real-time object detection (Mobile phones), person counting, and gaze tracking.
-- **Instant Alerts:** Real-time warnings sent to students if misbehavior is detected.
-- **Professor Dashboard:** Comprehensive cheating reports with risk scores and timeline analysis.
-- **Question Management:** Automated question generation and manual question creation (Objective, Subjective, and Practical).
-- **Security:** Built-in copy-paste protection, window-switching detection, and print-screen blocking.
+- Online exam workflow for students and professors
+- Objective, subjective, and practical question support
+- AI-based proctoring with face, gaze, head movement, and mobile-phone detection
+- Multiple-person detection during active exams
+- Liveness and face verification support
+- Copy-paste, tab/window switching, and screenshot/print-screen protection
+- Cheating logs, risk scoring, and timeline reports for professors
+- MySQL-backed data storage
+- Git LFS support for large model files
 
----
+## Tech Stack
 
-## 🛠️ Setup Instructions for Team Members
+- Python and Flask
+- MySQL
+- OpenCV, dlib, TensorFlow, DeepFace
+- YOLO model weights for object detection
+- HTML, CSS, and JavaScript templates
 
-Follow these steps exactly to run the project on your local machine:
+## Prerequisites
 
-### 1. Prerequisites
-- **Python 3.10+** installed.
-- **MySQL Server** installed and running.
-- **Git LFS** (Very Important!): Download and install from [git-lfs.github.com](https://git-lfs.github.com/).
+Install these before running the project:
 
-### 2. Clone and Initialize LFS
+- Python 3.10 or newer
+- MySQL Server
+- Git LFS
+- Visual C++ build tools may be required for packages such as `dlib` on Windows
+
+## Setup
+
+Clone the repository:
+
 ```bash
-git clone <YOUR_REPO_URL>
-cd MyProctor.ai-AI-BASED-SMART-ONLINE-EXAMINATION-PROCTORING-SYSYTEM
+git clone https://github.com/ritikbahurashi25-a11y/AI-Based-Proctoring-System.git
+cd AI-Based-Proctoring-System
+```
+
+Install and pull Git LFS files:
+
+```bash
 git lfs install
 git lfs pull
 ```
 
-### 3. Setup Virtual Environment
+Create and activate a virtual environment:
+
 ```bash
 python -m venv venv
-venv\Scripts\activate      # On Windows
-source venv/bin/activate   # On Linux/Mac
+venv\Scripts\activate
 ```
 
-### 4. Install Dependencies
+On macOS/Linux:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+Install dependencies:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 5. Setup Environment Variables
-- Copy `.env.example` to a new file named `.env`.
-- Open `.env` and fill in your local MySQL credentials (`MYSQL_PASSWORD`) and Gmail settings.
+Create the environment file:
+
 ```bash
 copy .env.example .env
 ```
 
-### 6. Setup Database
-- Open MySQL Workbench or your favorite SQL client.
-- Import the SQL schema from: `DB/quizappstructure.sql`.
-- Ensure the database name in your `.env` matches the one you created (`myproctor`).
+On macOS/Linux:
 
-### 7. Run the Application
+```bash
+cp .env.example .env
+```
+
+Update `.env` with your local MySQL credentials, mail settings, and application secrets.
+
+## Database Setup
+
+1. Create a MySQL database for the application.
+2. Import the schema from `DB/quizappstructure.sql`.
+3. Make sure the database name and credentials match your `.env` file.
+
+## Run
+
+Start the Flask application:
+
 ```bash
 python app.py
 ```
-Go to `http://localhost:5000` in your browser.
 
----
+Open the app in your browser:
 
-## 🛡️ Proctoring Logic
-The application captures snapshots every **2 seconds** during an active exam. The AI engine (YOLOv3) processes these snapshots on the server to detect:
-- 📱 **Mobile Phones**
-- 👤 **Multiple People**
-- ↔️ **Suspicious Head Movements**
-- 👁️ **Eye Gaze Deviations**
+```text
+http://localhost:5000
+```
 
-Cheating logs are saved to the `proctoring_log` table and displayed to professors in the **Cheating Report** dashboard.
+## Important Notes
+
+- Do not commit `.env`; use `.env.example` for shared configuration names.
+- Large model files are tracked with Git LFS. Run `git lfs pull` after cloning.
+- Runtime folders such as `flask_session`, `registration_tokens`, and generated evidence should stay untracked.
+
+## Project Structure
+
+```text
+app.py                    Main Flask application
+camera.py                 Camera and monitoring helpers
+face_verifier.py          Face verification logic
+proctoring_policy.py      Proctoring rules and scoring support
+DB/                       Database schema and related files
+models/                   AI model assets
+gaze_tracking/            Gaze tracking code and trained models
+templates/                HTML templates
+static/                   Static frontend assets
+requirements.txt          Python dependencies
+.env.example              Example environment configuration
+```
+
+## License
+
+This project is intended for academic and educational use. Add a license file before public production use.
+
