@@ -22,7 +22,14 @@
   {% for res in callresults %}
   <tr>
   <td>{{res['name']}}</td>
-  <td>{{res['voice_db']}}</td>
+  <td>
+  {{res['voice_db']}}
+  {% if res.get('audio_evidence') %}
+  <br><audio controls preload="none" style="width:220px">
+    <source src="{{ url_for('audio_evidence', filename=res['audio_evidence']) }}" type="audio/webm">
+  </audio>
+  {% endif %}
+  </td>
   <td>
   {% if res['voice_db'] < 10 %}
   <h6 class="text-primary"> Normal</h6>

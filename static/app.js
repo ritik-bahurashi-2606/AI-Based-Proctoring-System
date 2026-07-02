@@ -1,6 +1,9 @@
-var nos;
+var nos = [];
 var curr = 0;
 var data = {};
+var examUrl = window.location.pathname;
+var timerInterval = null;
+var timeSyncInterval = null;
 const NOT_MARKED=0;
 const MARKED=1;
 const BOOKMARKED=2;
@@ -17,105 +20,14 @@ function mySnackBar() {
 // NOTE: Tab-switch and blur events are handled by proctoring_common.js
 // The onfocus handler was incorrectly logging window events — removed.
 
-  var stream = document.getElementById("stream");
-  var capture = document.getElementById("capture");
-  var cameraStream = null;
-      
-  var array = null;
-  var values = 0;
-  var length = null;
-
-  /**
-   * startStreaming() — delegates to proctoring_common.js which handles
-   * camera, microphone, audio analysis and all track lifecycle warnings.
-   */
-  function startStreaming() {
-    if (typeof window.startStreaming === 'function' && window.startStreaming !== startStreaming) {
-      window.startStreaming();
-      return;
+function startExamProctoring() {
+    if (typeof window.startStreaming === 'function') {
+        window.startStreaming();
     }
-    // Fallback: basic camera access when proctoring_common.js not loaded
-    var mediaSupport = 'mediaDevices' in navigator;
-    if (mediaSupport && null == cameraStream) {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then(function(mediaStream) {
-          cameraStream = mediaStream;
-          var streamEl = document.getElementById('stream');
-          if (streamEl) { streamEl.srcObject = mediaStream; streamEl.play(); }
-        })
-        .catch(function(err) { console.error('Camera error:', err); });
+    if (typeof window.captureSnapshot === 'function') {
+        window.captureSnapshot();
     }
-  }
-
-  function stopStreaming() {
-    if (null != cameraStream) {
-      cameraStream.getTracks().forEach(function(t) { t.stop(); });
-      cameraStream = null;
-    }
-  }
-
-  function captureSnapshot() {
-    var streamEl = document.getElementById('stream');
-    var captureEl = document.getElementById('capture');
-    // Use cameraStream from proctoring_common.js scope if available
-    var activeStream = (typeof window._proctoringStream !== 'undefined')
-                       ? window._proctoringStream : cameraStream;
-
-    if (activeStream && streamEl && captureEl) {
-      var ctx = captureEl.getContext('2d');
-      ctx.drawImage(streamEl, 0, 0, captureEl.width, captureEl.height);
-      var dataUrl = captureEl.toDataURL('image/jpeg', 0.82);
-      var b64 = dataUrl.replace(/^data:image\/(jpeg|jpg|png);base64,/, '');
-
-      var avgAudio = (typeof values !== 'undefined' && typeof length !== 'undefined' && length)
-                     ? (values / length) : 0;
-
-      $.ajax({
-        url: '/video_feed',
-        type: 'POST',
-        dataType: 'json',
-        data: { data: { imgData: b64, voice_db: avgAudio, testid: tid } },
-        success: function(response) {
-          if (!response || response.status !== 'success') return;
-
-          // ── Process server warnings (new structured format) ────────────
-          var warnings = response.warnings || [];
-          warnings.forEach(function(ev) {
-            if (ev && ev.message) {
-              // showProctorWarning is provided by proctoring_common.js
-              if (typeof showProctorWarning === 'function') {
-                showProctorWarning(ev.message, ev.event_type);
-              } else if (window.Swal) {
-                Swal.fire({
-                  toast: true, position: 'top-end', icon: 'warning',
-                  title: ev.message, showConfirmButton: false,
-                  timer: 4000, timerProgressBar: true
-                });
-              }
-            }
-          });
-
-          // ── Trigger audio recording if server flagged suspicious audio ─
-          if (response.audio_suspicious) {
-            if (typeof startAudioEvidenceRecording === 'function') {
-              startAudioEvidenceRecording();
-            }
-          }
-
-          // Debug log (remove in production)
-          if (response.logged) {
-            console.info('[Proctor] Event logged. pid=' + response.pid +
-              ' yaw=' + response.head_yaw + ' pitch=' + response.head_pitch +
-              ' eyes=' + response.eye_movements);
-          }
-        },
-        error: function(xhr, status, err) {
-          console.warn('[Proctor] video_feed failed:', status, err);
-        }
-      });
-    }
-    setTimeout(captureSnapshot, 2000);
-  }
+}
 
 $(document).ready( function() {
     var url = window.location.href;
@@ -128,9 +40,9 @@ $(document).ready( function() {
             dataType:"json",
             data : {id: list[list.length-1]},
             success: function(temp) {
-                nos = temp;
-                display_ques(1);
+                nos = temp || [];
                 make_array();
+                display_ques(1);
                 ques_grid();
             }
         });
@@ -151,9 +63,11 @@ var unmark_all = function() {
 
 var display_ques = function(move) {
     unmark_all();
+    if (!nos.length || !data[curr+1]) return;
     $.ajax({
         type: "POST",
         dataType: 'json',
+        url: examUrl,
         data : {flag: 'get', no: nos[curr]},
         success: function(temp) {
             $('#que').text(temp['q']);
@@ -175,8 +89,7 @@ var flag_time = true;
 function startTimer(duration, display) {
     var timer = duration,hours, minutes, seconds;
     
-    var interval = setInterval(function () {
-        console.log(timer);
+    timerInterval = setInterval(function () {
         hours = parseInt(timer / 3600 ,10);
         minutes = parseInt((timer%3600) / 60, 10);
         seconds = parseInt(timer % 60, 10);
@@ -188,29 +101,41 @@ function startTimer(duration, display) {
 
         if (--timer < 0) {
             finish_test();
-            clearInterval(interval);
+            clearInterval(timerInterval);
             flag_time = false;
         }
     }, 1000);
 }
 
 function finish_test() {
+    save_current_answer(false);
     $('#msg').addClass('alert-info');
     $('#msg').append("Test submitted successfully");
+    flag_time = false;
+    if (timerInterval) clearInterval(timerInterval);
+    if (timeSyncInterval) clearInterval(timeSyncInterval);
+    if (typeof window.stopStreaming === 'function') window.stopStreaming();
     $.ajax({
         type: "POST",
         dataType: "json",
+        url: examUrl,
         data: {flag: 'completed'},
         success: function(data) {
             window.location.replace('/student_index');
+        },
+        error: function(error) {
+            console.error("Finish test failed:", error);
+            if (window.Swal) {
+                Swal.fire('Submit failed', 'Please check your connection and try again.', 'error');
+            }
         }
     });    
 }
 
 function sendTime() {
-    var intervalTime = setInterval(function() {
+    timeSyncInterval = setInterval(function() {
         if(flag_time == false){
-            clearInterval(intervalTime);
+            clearInterval(timeSyncInterval);
         }
         var time = $('#time').text();
         var [hh,mm,ss] = time.split(':');
@@ -221,16 +146,20 @@ function sendTime() {
         $.ajax({
             type: 'POST',
             dataType: "json",
+            url: examUrl,
             data: {flag:'time', time: seconds},
         });
         if(flag_time == false){
-            clearInterval(intervalTime);
+            clearInterval(timeSyncInterval);
         }
     }, 5000);
 }
 
 $(document).on('click', '#next', function(e){
     e.preventDefault();
+    if (!nos.length) return;
+    save_current_answer(false);
+    if (curr >= nos.length - 1) return;
     curr += 1;
     display_ques(curr+1);
     
@@ -238,40 +167,54 @@ $(document).on('click', '#next', function(e){
 
 $(document).on('click', '#prev', function(e){
     e.preventDefault();
+    if (!nos.length || curr <= 0) return;
+    save_current_answer(false);
     curr -= 1;
     display_ques(curr+1);
     
 });
 
-$('#submit').on('click', function(e){
-    e.preventDefault();
+function save_current_answer(markSubmitted) {
     var marked;
     if(flag_time == false){
-        window.location.replace('/student_index');
-        return;
+        return false;
     }
     $('#options td').each(function(i) 
     {
         if($(this).css("background-color") != 'rgba(0, 0, 0, 0)'){
             marked =  $(this).attr('id');
             data[curr+1].marked= marked;
-            data[curr+1].status = SUBMITTED;
+            if (data[curr+1].status === BOOKMARKED || data[curr+1].status === SUBMITTED_BOOKMARKED) {
+                data[curr+1].status = SUBMITTED_BOOKMARKED;
+            } else if (markSubmitted || data[curr+1].status === MARKED) {
+                data[curr+1].status = SUBMITTED;
+            }
             $('#question-list').empty();
             ques_grid();
         }
     });
+    if (!marked) return false;
     $.ajax({
         type: "POST",
         dataType: 'json',
+        url: examUrl,
         data : {flag: 'mark', qid: nos[curr], ans: marked},
         success: function(data) {
-            console.log('Answer posted')
+            console.log('Answer saved', data);
         },
         error: function(error){
             console.log("Here is the error res: " + JSON.stringify(error));
         }
     });
-    $('#next').trigger('click');
+    return true;
+}
+
+$('#submit').on('click', function(e){
+    e.preventDefault();
+    if (save_current_answer(true) && curr < nos.length - 1) {
+        curr += 1;
+        display_ques(curr+1);
+    }
 });
 
 $('#bookmark').on('click', function(e){
@@ -305,7 +248,9 @@ $('#options').on('click', 'td', function(){
         var que = $('#queid').attr('id');
         unmark_all();
         $(this).css("background-color",'rgba(0, 255, 0, 0.6)');
-        data[curr+1].status = MARKED;
+        if (data[curr+1].status !== SUBMITTED && data[curr+1].status !== SUBMITTED_BOOKMARKED) {
+            data[curr+1].status = MARKED;
+        }
         data[curr+1].marked = $(this).attr('id');
     }
     else {
@@ -370,10 +315,17 @@ var make_array = function() {
     var txt = document.createElement('textarea');
     txt.innerHTML = answers;
     answers = txt.value;
-    answers = JSON.parse(answers);
+    try {
+        answers = JSON.parse(answers || '{}');
+    } catch (err) {
+        console.warn('Could not parse saved answers:', err);
+        answers = {};
+    }
     for(var key in answers) {
-        data[parseInt(key)+1].marked = answers[key]
-        data[parseInt(key)+1].status = SUBMITTED;
+        if (data[parseInt(key)+1]) {
+            data[parseInt(key)+1].marked = answers[key];
+            data[parseInt(key)+1].status = SUBMITTED;
+        }
     }
 }
 
@@ -410,8 +362,12 @@ function funSubmitExam()
       });
   });
 
+  var lastPrintScreenWarningAt = 0;
   document.addEventListener('keyup', (e) => {
   if (e.key == 'PrintScreen') {
+  var now = Date.now();
+  if (now - lastPrintScreenWarningAt < 3000) return;
+  lastPrintScreenWarningAt = now;
   navigator.clipboard.writeText('');
   alert('Screenshots disabled!');
   }

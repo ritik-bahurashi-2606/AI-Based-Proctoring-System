@@ -104,6 +104,7 @@ CREATE TABLE `proctoring_log` (
   `user_movements_eyes` tinyint(2) NOT NULL,
   `phone_detection` tinyint(2) NOT NULL,
   `person_status` tinyint(2) NOT NULL,
+  `audio_evidence` varchar(255) DEFAULT NULL,
   `log_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `uid` bigint(20) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

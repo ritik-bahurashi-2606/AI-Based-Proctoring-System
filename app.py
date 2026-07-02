@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, flash, redirect, url_for,session, logging, send_file, jsonify, Response, render_template_string
+from flask import Flask, request, render_template, flash, redirect, url_for,session, logging, send_file, send_from_directory, jsonify, Response, render_template_string
 from flask_login import LoginManager, login_user, logout_user, current_user, login_required, UserMixin
 from flask_mysqldb import MySQL
 from wtforms import Form, StringField, TextAreaField, PasswordField, validators, DateTimeField, BooleanField, IntegerField, DecimalField, HiddenField, SelectField, RadioField, SubmitField
@@ -322,6 +322,35 @@ _AUDIO_EVIDENCE_DIR = os.path.join(BASE_DIR, 'audio_evidence')
 os.makedirs(_AUDIO_EVIDENCE_DIR, exist_ok=True)
 
 
+def _ensure_proctoring_audio_column():
+	"""Add the optional audio evidence column when an older DB is in use."""
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute(
+			"SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS "
+			"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'proctoring_log' "
+			"AND COLUMN_NAME = 'audio_evidence'"
+		)
+		row = cur.fetchone() or {}
+		if int(row.get('cnt', 0)) == 0:
+			cur.execute("ALTER TABLE proctoring_log ADD COLUMN audio_evidence varchar(255) DEFAULT NULL")
+			mysql.connection.commit()
+	except Exception as err:
+		app.logger.warning('Could not verify/create proctoring_log.audio_evidence: %s', err)
+		try:
+			mysql.connection.rollback()
+		except Exception:
+			pass
+	finally:
+		cur.close()
+
+
+@app.route('/audio_evidence/<path:filename>')
+@professor_required
+def audio_evidence(filename):
+	return send_from_directory(_AUDIO_EVIDENCE_DIR, secure_filename(filename), as_attachment=False)
+
+
 def _is_event_allowed(uid, test_id, event_type, cooldown=None):
 	"""Return True if enough time has passed since the last log for this event."""
 	cooldown = cooldown or _PROCTOR_COOLDOWN_SECS
@@ -396,11 +425,9 @@ def video_feed():
 		logged  = False
 		log_pid = None
 		if should_log and logged_events:
-			# Store screenshot only for high-risk events
-			HIGH_RISK = {'mobile_phone','multiple_persons','student_absent',
-			             'suspicious_audio','face_fully_out_of_frame'}
-			store_img = jpg_as_text if any(
-				e['event_type'] in HIGH_RISK for e in logged_events) else ''
+			# Keep the annotated frame for every stored malpractice event so professor
+			# reports have evidence instead of empty screenshots.
+			store_img = jpg_as_text
 
 			dominant = logged_events[0]['event_type']
 			try:
@@ -471,20 +498,21 @@ def upload_audio_evidence():
 		fpath = os.path.join(_AUDIO_EVIDENCE_DIR, fname)
 		audio_file.save(fpath)
 
-		# Link audio file path to the proctoring_log row if pid is known
+		# Link audio file path to the proctoring_log row if pid is known.
+		# The primary key is pid, not id.
 		if pid:
 			try:
+				_ensure_proctoring_audio_column()
 				cur = mysql.connection.cursor()
-				# Try to store path – column audio_evidence may not exist yet, handle gracefully
 				cur.execute(
 					'UPDATE proctoring_log SET audio_evidence = %s '
-					'WHERE id = %s AND uid = %s',
+					'WHERE pid = %s AND uid = %s',
 					(fname, pid, uid),
 				)
 				mysql.connection.commit()
 				cur.close()
 			except Exception as db_err:
-				app.logger.warning('audio_evidence column update failed (column may not exist): %s', db_err)
+				app.logger.warning('audio_evidence update failed: %s', db_err)
 				try:
 					mysql.connection.rollback()
 				except Exception:
@@ -1870,7 +1898,13 @@ def displaystudentsdetails():
 	if request.method == 'POST':
 		tidoption = request.form['choosetid']
 		cur = mysql.connection.cursor()
-		cur.execute('SELECT DISTINCT email,test_id from proctoring_log where test_id = %s', [tidoption])
+		cur.execute('''
+			SELECT DISTINCT email, test_id FROM proctoring_log WHERE test_id = %s
+			UNION
+			SELECT DISTINCT email, test_id FROM window_estimation_log WHERE test_id = %s
+			UNION
+			SELECT DISTINCT email, test_id FROM studenttestinfo WHERE test_id = %s AND completed = 1
+		''', (tidoption, tidoption, tidoption))
 		callresults = cur.fetchall()
 		cur.close()
 		return render_template("displaystudentsdetails.html", callresults = callresults)
@@ -1968,15 +2002,7 @@ def countMobStudentslogs(testid,email):
 
 def countMTOPstudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT COUNT(*) as percount from proctoring_log where test_id = %s and email = %s and person_status = 1', (testid, email))
-	callresults = cur.fetchall()
-	cur.close()
-	perc = [i['percount'] for i in callresults]
-	return perc
-
-def countMTOPstudentslogs(testid,email):
-	cur = mysql.connection.cursor()
-	cur.execute('SELECT COUNT(*) as percount from proctoring_log where test_id = %s and email = %s and person_status = 1', (testid, email))
+	cur.execute('SELECT COUNT(*) as percount from proctoring_log where test_id = %s and email = %s and person_status IN (0,2)', (testid, email))
 	callresults = cur.fetchall()
 	cur.close()
 	perc = [i['percount'] for i in callresults]
@@ -2026,7 +2052,7 @@ def mobdisplaystudentslogs(testid,email):
 @user_role_professor
 def persondisplaystudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s and person_status = 1', (testid, email))
+	cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s and person_status IN (0,2)', (testid, email))
 	callresults = cur.fetchall()
 	cur.close()
 	return render_template("persondisplaystudentslogs.html",testid = testid, email = email, callresults = callresults)
@@ -2271,18 +2297,24 @@ def test(testid):
 					cur.close()
 					return json.dumps(data)
 			elif flag=='mark':
-				qid = request.form['qid']
-				ans = request.form['ans']
-				cur = mysql.connection.cursor()
-				results = cur.execute('SELECT * from students where test_id =%s and qid = %s and email = %s', (testid, qid, session['email']))
-				if results > 0:
-					cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s', (ans, testid, qid, session['email']))
-					mysql.connection.commit()
+				qid = request.form.get('qid')
+				ans = request.form.get('ans')
+				if not qid or not ans:
 					cur.close()
+					return jsonify({'status': 'error', 'message': 'Missing qid or answer'}), 400
+				cur = mysql.connection.cursor()
+				results = cur.execute('SELECT sid from students where test_id = %s and qid = %s and email = %s and uid = %s', (testid, qid, session['email'], session['uid']))
+				if results > 0:
+					cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s and uid = %s', (ans, testid, qid, session['email'], session['uid']))
+					action = 'updated'
 				else:
 					cur.execute('INSERT INTO students(email,test_id,qid,ans,uid) values(%s,%s,%s,%s,%s)', (session['email'], testid, qid, ans, session['uid']))
-					mysql.connection.commit()
-					cur.close()
+					action = 'inserted'
+				mysql.connection.commit()
+				rowcount = cur.rowcount
+				cur.close()
+				app.logger.info('Answer %s: uid=%s test=%s qid=%s ans=%s', action, session['uid'], testid, qid, ans)
+				return jsonify({'status': 'success', 'action': action, 'rows': rowcount})
 			elif flag=='time':
 				cur = mysql.connection.cursor()
 				time_left = request.form['time']
@@ -2297,9 +2329,11 @@ def test(testid):
 				cur = mysql.connection.cursor()
 				cur.execute('UPDATE studentTestInfo set completed=1,time_left=sec_to_time(0) where test_id = %s and email = %s and uid = %s', (testid, session['email'],session['uid']))
 				mysql.connection.commit()
+				rows = cur.rowcount
 				cur.close()
+				app.logger.info('Exam completed: uid=%s email=%s test=%s rows=%s', session['uid'], session['email'], testid, rows)
 				flash("Exam submitted successfully", 'info')
-				return json.dumps({'sql':'fired'})
+				return jsonify({'status':'success', 'completed': True, 'rows': rows})
 
 	elif callresults['test_type'] == "subjective":
 		if request.method == 'GET':
@@ -2449,21 +2483,33 @@ def check_result(email, testid):
 
 def neg_marks(email,testid,negm):
 	cur=mysql.connection.cursor()
-	results = cur.execute("select q.marks, q.qid as qid, \
-				q.ans as correct, ifnull(MAX(s.ans),0) as marked from questions q inner join \
-				students s on  s.test_id = q.test_id and s.test_id = %s \
-				and s.email = %s and s.qid = q.qid group by q.qid, q.marks, q.ans \
-				order by q.qid asc", (testid, email))
-	data=cur.fetchall()
+	try:
+		negm = float(negm or 0)
+		results = cur.execute("""
+			select q.marks, q.qid as qid, q.ans as correct,
+			       ifnull(MAX(s.ans),0) as marked
+			from questions q
+			left join students s on s.test_id = q.test_id
+				and s.email = %s and s.qid = q.qid
+			where q.test_id = %s
+			group by q.qid, q.marks, q.ans
+			order by LPAD(lower(q.qid),10,0) asc
+		""", (email, testid))
+		data=cur.fetchall()
+	finally:
+		cur.close()
 
-	sum=0.0
-	for i in range(results):
-		if(str(data[i]['marked']).upper() != '0'):
-			if(str(data[i]['marked']).upper() != str(data[i]['correct']).upper()):
-				sum=sum - (negm/100) * int(data[i]['marks'])
-			elif(str(data[i]['marked']).upper() == str(data[i]['correct']).upper()):
-				sum+=int(data[i]['marks'])
-	return sum
+	total = 0.0
+	for row in data:
+		marked = str(row.get('marked', '0')).upper()
+		correct = str(row.get('correct', '')).upper()
+		marks = float(row.get('marks') or 0)
+		if marked != '0':
+			if marked != correct:
+				total -= (negm/100) * marks
+			else:
+				total += marks
+	return total
 
 def totmarks(email,tests): 
 	cur = mysql.connection.cursor()
@@ -2526,14 +2572,17 @@ def tests_given(email):
 
             if callresults['test_type'] == "objective":
                 cur = mysql.connection.cursor()
-                cur.execute('select distinct(students.test_id) as test_id, students.email as email, subject, topic, neg_marks from students, studenttestinfo, teachers where students.email = %s and students.email = studenttestinfo.email and teachers.test_type = %s and students.test_id = %s and students.test_id = teachers.test_id and students.test_id = studenttestinfo.test_id and studenttestinfo.completed = 1', (email, "objective", tidoption))
+                cur.execute('''
+                    select sti.test_id as test_id, sti.email as email,
+                           t.subject as subject, t.topic as topic, t.neg_marks as neg_marks
+                    from studenttestinfo sti
+                    join teachers t on t.test_id = sti.test_id and t.test_type = %s
+                    where sti.email = %s and sti.uid = %s and sti.test_id = %s and sti.completed = 1
+                ''', ("objective", email, session['uid'], tidoption))
                 results = cur.fetchall()
                 cur.close()
-                results1 = []
-                for a in results:
-                    results1.append(neg_marks(a['email'], a['test_id'], a['neg_marks']))
-                
-                studentResults = zip(results, results1) if results else None
+                results1 = [neg_marks(a['email'], a['test_id'], a['neg_marks']) for a in results]
+                studentResults = list(zip(results, results1))
                 return render_template('obj_result_student.html', tests=studentResults)
 
             elif callresults['test_type'] == "subjective":
@@ -2930,7 +2979,20 @@ def cheat_report():
         )
         tab_rows = {r['email']: r for r in (cur.fetchall() or [])}
 
-        # 3. Fetch snapshots (img_log) per student  – limit per student to avoid huge payloads
+        # 3. Fetch students who completed the exam, even if they only have window logs.
+        cur.execute(
+            '''
+            SELECT sti.email, COALESCE(u.name, sti.email) AS name
+            FROM studenttestinfo sti
+            LEFT JOIN users u ON u.email = sti.email AND u.user_type = 'student'
+            WHERE sti.test_id = %s AND sti.completed = 1
+            GROUP BY sti.email, u.name
+            ''',
+            (test_id,)
+        )
+        completed_rows = cur.fetchall() or []
+
+        # 4. Fetch snapshots (img_log) per student  – limit per student to avoid huge payloads
         cur.execute(
             '''
             SELECT email, img_log,
@@ -2964,16 +3026,22 @@ def cheat_report():
                     'head_turn': sr['user_movements_lr'] != 0 or sr['user_movements_updown'] != 0,
                 })
 
-        # 4. Build student list
+        # 5. Build student list
         students = []
+        proctor_by_email = {r['email']: r for r in proctor_rows}
+        all_emails = set(proctor_by_email.keys()) | set(tab_rows.keys()) | {r['email'] for r in completed_rows}
+        names_by_email = {r['email']: r.get('name') or r['email'] for r in completed_rows}
         for row in proctor_rows:
-            email         = row['email']
-            name          = row['name']
-            total_snaps   = int(row['total_snapshots'] or 0)
-            phone_f       = int(row['phone_flags'] or 0)
-            person_f      = int(row['person_flags'] or 0)
-            head_f        = int((row['head_flags_lr'] or 0)) + int((row['head_flags_ud'] or 0))
-            eye_f         = int(row['eye_flags'] or 0)
+            if row.get('name'):
+                names_by_email[row['email']] = row['name']
+        for email in all_emails:
+            row = proctor_by_email.get(email, {})
+            name          = names_by_email.get(email, email)
+            total_snaps   = int(row.get('total_snapshots') or 0)
+            phone_f       = int(row.get('phone_flags') or 0)
+            person_f      = int(row.get('person_flags') or 0)
+            head_f        = int((row.get('head_flags_lr') or 0)) + int((row.get('head_flags_ud') or 0))
+            eye_f         = int(row.get('eye_flags') or 0)
             tab_info      = tab_rows.get(email, {})
             tab_sw        = int(tab_info.get('tab_switches', 0) or 0)
 
