@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.git
+.github
+venv/
+env/
+.env
+registration_tokens/*.json
+*.md
+README*.md
+QUICK_START.txt
