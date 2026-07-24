@@ -1,40 +1,31 @@
 {% extends 'professor_dashboard.html' %}
 {% block body %}
-<div class="row align-items-center d-flex  justify-content-center">
-    <div class="col-12 mb-4">
-        <div class="card border-light shadow-sm components-section align-items-center d-flex  justify-content-center">
-            <div class="card-body align-items-center d-flex justify-content-center">     
-                <div class="row mb-4">
-                    {% if cresults is not none %}
-                    <div class="col-lg-12 col-sm-16">
-                      <h3 class="h3 text-center">VIEW STUDENT LOGS</h3>  
-                    </div>
-<center><lottie-player src="https://assets3.lottiefiles.com/packages/lf20_45rapv.json"  background="transparent"  speed="1"  style="width: 250px; height: 250px;"  loop  autoplay></lottie-player></center>
-                    <div class="card-body">
-							    <form action="displaystudentsdetails" method="POST" class="mt-4">
-                                    <div class="form-group text-center">
-                                        <div class="form-group">
-                                            <label class="my-1 mr-2" for="livebox">Choose Exam ID:</label>
-                                            <select class="custom-select my-1 mr-sm-2" id="livebox" name="choosetid" required>
-                                                {% for test in cresults %}
-                                                <option value={{test['test_id']}}>{{test['test_id']}}</option>
-                                                {% endfor %}
-                                            </select>
-                                        </div>
-                                    <input type="submit" class="btn btn-block btn-primary" value="VIEW STUDENT LOGS"/>
-                                </form>
-                                </div>
-                            </div>
-                            {% else %}
-                            <div class="col-lg-12 col-sm-16">
-                                <center><lottie-player src="https://assets7.lottiefiles.com/datafiles/vhvOcuUkH41HdrL/data.json"  background="transparent"  speed="1"  style="width: 300px; height: 300px;"  loop  autoplay></lottie-player></center>
-                                <h3 class="h3 text-center">
-                                    No Records Found!
-                                </h3>  
-                              </div>
-                            {% endif %}
-                        </div>
-        </div>
-    </div>
+<div class="container-fluid">
+  <h3 class="h3 mb-4 text-center">View Student Logs</h3>
+  <div class="row mb-3">
+    <div class="col-md-8 mb-2"><input id="logSearch" class="form-control" placeholder="Search exam ID, student name, email, student ID"></div>
+    <div class="col-md-4 mb-2"><input id="logDate" type="date" class="form-control"></div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-centered table-nowrap mb-0 rounded" id="studentLogsTable">
+      <thead class="thead-light"><tr><th>Exam ID</th><th>Student ID</th><th>Name</th><th>Email</th><th>Last Log</th><th>Logs</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <h4 id="noLogs" class="text-center mt-4" style="display:none;">No Records Found!</h4>
 </div>
+<script>
+let logTimer;
+function renderLogs(rows) {
+  const tbody = document.querySelector('#studentLogsTable tbody');
+  document.getElementById('noLogs').style.display = rows.length ? 'none' : 'block';
+  tbody.innerHTML = rows.map(r => `<tr><td>${r.test_id}</td><td>${r.student_id}</td><td>${r.student_name}</td><td>${r.email}</td><td>${r.last_log_time || ''}</td><td><a class="btn btn-sm btn-primary" href="/studentmonitoringstats/${r.test_id}/${r.email}">View</a></td></tr>`).join('');
+}
+function loadLogs() {
+  const params = new URLSearchParams({search: logSearch.value, date: logDate.value});
+  fetch(`/api/student-logs?${params}`).then(r => r.json()).then(data => { if (data.status === 'success') renderLogs(data.logs); });
+}
+['logSearch','logDate'].forEach(id => document.getElementById(id).addEventListener('input', () => { clearTimeout(logTimer); logTimer = setTimeout(loadLogs, 200); }));
+loadLogs();
+</script>
 {% endblock %}

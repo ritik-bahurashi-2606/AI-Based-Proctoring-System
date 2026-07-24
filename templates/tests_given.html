@@ -1,39 +1,30 @@
 {% extends 'student_dashboard.html' %}
 {% block body %}
-<div class="row align-items-center d-flex  justify-content-center">
-    <div class="col-12 mb-4">
-        <div class="card border-light shadow-sm components-section align-items-center d-flex  justify-content-center">
-            <div class="card-body align-items-center d-flex justify-content-center">     
-                <div class="row mb-4">
-                    {% if(cresults is not none and cresults) %}
-                    <div class="col-lg-12 col-sm-16">
-                      <h3 class="h3 text-center">SELECT EXAM-ID TO VIEW YOUR RESULTS</h3>  
-                    </div>
-                    <div class="card-body">
-							    <form action="" method="POST" class="mt-4">
-                                    <div class="form-group text-center">
-                                        <div class="form-group">
-                                            <label class="my-1 mr-2">Choose Exam ID:</label>
-                                            <select class="custom-select my-1 mr-sm-2" name="choosetid" required>
-                                                {% for test in cresults %}
-                                                <option value={{test['test_id']}}>{{test['test_id']}}</option>
-                                                {% endfor %}
-                                            </select>
-                                        </div>
-                                    <input type="submit" class="btn btn-block btn-primary" value="SHOW RESULT"/>
-                                </form>
-                    </div>
-                    {% else %}
-                    <div class="col-lg-12 col-sm-16">
-                        <center><lottie-player src="https://assets7.lottiefiles.com/datafiles/vhvOcuUkH41HdrL/data.json"  background="transparent"  speed="1"  style="width: 300px; height: 300px;"  loop  autoplay></lottie-player></center>
-                        <h3 class="h3 text-center">
-                            No Records Found!
-                        </h3>  
-                      </div>
-                    {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+<div class="container-fluid">
+  <h3 class="h3 mb-4 text-center">My Results</h3>
+  <div class="table-responsive">
+    <table class="table table-centered table-nowrap mb-0 rounded" id="studentResultsTable">
+      <thead class="thead-light">
+        <tr>
+          <th>Exam ID</th><th>Subject</th><th>Topic</th><th>Marks</th><th>Percentage</th><th>Pass/Fail</th><th>Submitted</th><th>Risk Score</th><th>Risk Level</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for result in results %}
+        <tr>
+          <td>{{ result['exam_id'] }}</td><td>{{ result['subject'] }}</td><td>{{ result['topic'] }}</td><td>{{ result['marks'] }}</td><td>{{ result['percentage'] }}%</td><td>{{ result['result_status'] }}</td><td>{{ result['submission_time'] }}</td><td>{{ result['cheating_risk_score'] }}</td><td>{{ result['risk_level'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if not results %}<h4 class="text-center mt-4">No Records Found!</h4>{% endif %}
+</div>
+<script>
+function renderStudentResults(rows) {
+  const tbody = document.querySelector('#studentResultsTable tbody');
+  tbody.innerHTML = rows.map(r => `<tr><td>${r.exam_id}</td><td>${r.subject}</td><td>${r.topic}</td><td>${r.marks}</td><td>${r.percentage}%</td><td>${r.result_status}</td><td>${r.submission_time}</td><td>${r.cheating_risk_score}</td><td>${r.risk_level}</td></tr>`).join('');
+}
+fetch('/api/student-results').then(r => r.json()).then(data => { if (data.status === 'success') renderStudentResults(data.results); });
+</script>
 {% endblock %}

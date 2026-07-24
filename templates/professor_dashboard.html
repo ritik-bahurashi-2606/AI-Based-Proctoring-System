@@ -279,7 +279,7 @@
 
         <!-- Create Exam -->
         <li class="nav-item">
-          <a class="nav-link collapsed" data-toggle="collapse" href="#submenu-create" aria-expanded="false">
+          <a class="nav-link collapsed" href="#submenu-create" aria-expanded="false" onclick="toggleCreateExam(event)">
             <span class="sidebar-icon"><i class="fas fa-plus"></i></span>
             <span class="sidebar-text">Create Exam</span>
             <span class="link-arrow"><i class="fas fa-chevron-right"></i></span>
@@ -333,22 +333,6 @@
           </a>
         </li>
 
-        <!-- Update Questions -->
-        <li class="nav-item">
-          <a class="nav-link" href="/updatedispques">
-            <span class="sidebar-icon"><i class="fas fa-edit"></i></span>
-            <span class="sidebar-text">Update Questions</span>
-          </a>
-        </li>
-
-        <!-- Delete Questions -->
-        <li class="nav-item">
-          <a class="nav-link" href="/deldispques">
-            <span class="sidebar-icon"><i class="fas fa-trash"></i></span>
-            <span class="sidebar-text">Delete Questions</span>
-          </a>
-        </li>
-
         <!-- Exam History -->
         <li class="nav-item">
           <a class="nav-link" href="/{{ session['email'] }}/disptests">
@@ -386,14 +370,6 @@
           <a class="nav-link" href="/insertmarkstid">
             <span class="sidebar-icon"><i class="fas fa-pen-nib"></i></span>
             <span class="sidebar-text">Insert Marks</span>
-          </a>
-        </li>
-
-        <!-- Publish Results -->
-        <li class="nav-item">
-          <a class="nav-link" href="/publish-results-testid">
-            <span class="sidebar-icon"><i class="fas fa-bullhorn"></i></span>
-            <span class="sidebar-text">Publish Results</span>
           </a>
         </li>
 
@@ -449,6 +425,16 @@
   <script src="{{ url_for('static', filename='volt/vendor/onscreen/dist/on-screen.umd.min.js') }}"></script>
   <script src="{{ url_for('static', filename='volt/vendor/sweetalert2/dist/sweetalert2.all.min.js') }}"></script>
   <script src="{{ url_for('static', filename='volt/assets/js/volt.js') }}"></script>
+  <script>
+    function toggleCreateExam(event) {
+      event.preventDefault();
+      var trigger = event.currentTarget;
+      var menu = document.getElementById('submenu-create');
+      var open = menu.classList.toggle('show');
+      trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      trigger.classList.toggle('collapsed', !open);
+    }
+  </script>
   <script async defer src="https://buttons.github.io/buttons.js"></script>
 
 </body>

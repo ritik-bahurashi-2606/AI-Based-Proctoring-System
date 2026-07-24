@@ -23,6 +23,36 @@ SET time_zone = "+00:00";
 
 -- --------------------------------------------------------
 
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `exam_results`
+--
+
+CREATE TABLE `exam_results` (
+  `result_id` bigint(20) NOT NULL,
+  `student_id` bigint(20) NOT NULL,
+  `student_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `student_email` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `exam_id` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `subject` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `topic` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `professor_id` bigint(20) NOT NULL,
+  `professor_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `total_questions` int(11) NOT NULL DEFAULT '0',
+  `attempted_questions` int(11) NOT NULL DEFAULT '0',
+  `correct_answers` int(11) NOT NULL DEFAULT '0',
+  `wrong_answers` int(11) NOT NULL DEFAULT '0',
+  `marks` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `percentage` decimal(6,2) NOT NULL DEFAULT '0.00',
+  `result_status` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `submission_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `cheating_risk_score` int(11) NOT NULL DEFAULT '0',
+  `risk_level` varchar(25) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Safe',
+  `uid` bigint(20) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 --
 -- Table structure for table `longqa`
 --
@@ -222,6 +252,16 @@ CREATE TABLE `window_estimation_log` (
 --
 
 --
+-- Indexes for table `exam_results`
+--
+ALTER TABLE `exam_results`
+  ADD PRIMARY KEY (`result_id`),
+  ADD UNIQUE KEY `uniq_exam_result_student` (`student_email`,`exam_id`,`uid`),
+  ADD KEY `idx_exam_results_professor` (`professor_id`,`exam_id`),
+  ADD KEY `idx_exam_results_student` (`student_id`,`student_email`),
+  ADD KEY `uid` (`uid`);
+
+--
 -- Indexes for table `longqa`
 --
 ALTER TABLE `longqa`
@@ -305,6 +345,12 @@ ALTER TABLE `window_estimation_log`
 --
 
 --
+-- AUTO_INCREMENT for table `exam_results`
+--
+ALTER TABLE `exam_results`
+  MODIFY `result_id` bigint(20) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `longqa`
 --
 ALTER TABLE `longqa`
@@ -373,6 +419,14 @@ ALTER TABLE `window_estimation_log`
 --
 -- Constraints for dumped tables
 --
+
+--
+-- Constraints for table `exam_results`
+--
+ALTER TABLE `exam_results`
+  ADD CONSTRAINT `exam_results_student_fk` FOREIGN KEY (`student_id`) REFERENCES `users` (`uid`),
+  ADD CONSTRAINT `exam_results_professor_fk` FOREIGN KEY (`professor_id`) REFERENCES `users` (`uid`),
+  ADD CONSTRAINT `exam_results_uid_fk` FOREIGN KEY (`uid`) REFERENCES `users` (`uid`);
 
 --
 -- Constraints for table `longqa`
