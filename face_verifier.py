@@ -18,8 +18,6 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 IMAGE_PLACEHOLDERS = {"", "no_camera"}
-# Minimum face-match confidence (0–100 %) required for login.
-# Can be overridden via the FACE_MATCH_THRESHOLD environment variable.
 DEFAULT_FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "66"))
 EAR_LIVENESS_THRESHOLD = float(os.getenv("EAR_LIVENESS_THRESHOLD", "0.10"))
 MIN_FACE_AREA_RATIO = float(os.getenv("FACE_MIN_AREA_RATIO", "0.08"))
@@ -39,6 +37,7 @@ _DAT_PATH = os.path.join(
 _deepface = None
 _face_detector = None
 _predictor = None
+_insightface_backend = None
 
 _LEFT_EYE_IDX = list(range(36, 42))
 _RIGHT_EYE_IDX = list(range(42, 48))
@@ -51,6 +50,21 @@ def _get_deepface():
 
         _deepface = DeepFace
     return _deepface
+
+
+def _get_insightface_backend():
+    global _insightface_backend
+    if _insightface_backend is None:
+        try:
+            from insightface.app import FaceAnalysis  # noqa: PLC0415
+
+            app = FaceAnalysis(name="buffalo_l", root=os.path.join(_BASE_DIR, "models"))
+            app.prepare(ctx_id=0, det_size=(640, 640))
+            _insightface_backend = app
+        except Exception as exc:
+            logger.warning("InsightFace backend unavailable: %s", exc)
+            _insightface_backend = False
+    return _insightface_backend if _insightface_backend is not False else None
 
 
 def _load_dlib():
@@ -145,41 +159,29 @@ def check_liveness(image_bgr):
 
 def assess_face_capture(image_bgr, require_liveness=False):
     if image_bgr is None:
-        return _empty_result(
-            message="Invalid face image. Please capture a fresh webcam photo."
-        )
+        return _empty_result(message="Invalid face image. Please capture a fresh webcam photo.")
 
     height, width = image_bgr.shape[:2]
     if width < 240 or height < 180:
-        return _empty_result(
-            message="Photo quality is too low. Please retake a larger, clearer photo."
-        )
+        return _empty_result(message="Photo quality is too low. Please retake a larger, clearer photo.")
 
     try:
         gray, faces = _detect_faces(image_bgr)
     except Exception as exc:
         logger.warning("Face capture assessment error: %s", exc)
-        return _empty_result(
-            message="Face verification could not run. Please try again."
-        )
+        return _empty_result(message="Face verification could not run. Please try again.")
 
     if not faces:
-        return _empty_result(
-            message="No clear face was detected. Look at the camera and retake the photo."
-        )
+        return _empty_result(message="No clear face was detected. Look at the camera and retake the photo.")
     if len(faces) > 1:
-        return _empty_result(
-            message="Multiple faces detected. Only one person should be visible."
-        )
+        return _empty_result(message="Multiple faces detected. Only one person should be visible.")
 
     face = faces[0]
     face_width = max(face.right() - face.left(), 1)
     face_height = max(face.bottom() - face.top(), 1)
     face_area_ratio = (face_width * face_height) / float(width * height)
     if face_area_ratio < MIN_FACE_AREA_RATIO:
-        return _empty_result(
-            message="Your face is too far from the camera. Move closer and retake the photo."
-        )
+        return _empty_result(message="Your face is too far from the camera. Move closer and retake the photo.")
 
     face_center_x = (face.left() + face.right()) / 2.0
     face_center_y = (face.top() + face.bottom()) / 2.0
@@ -187,9 +189,7 @@ def assess_face_capture(image_bgr, require_liveness=False):
         abs(face_center_x - (width / 2.0)) / width > MAX_FACE_CENTER_OFFSET
         or abs(face_center_y - (height / 2.0)) / height > MAX_FACE_CENTER_OFFSET
     ):
-        return _empty_result(
-            message="Keep your face centered and front-facing, then retake the photo."
-        )
+        return _empty_result(message="Keep your face centered and front-facing, then retake the photo.")
 
     x1, y1 = max(face.left(), 0), max(face.top(), 0)
     x2, y2 = min(face.right(), width), min(face.bottom(), height)
@@ -215,9 +215,7 @@ def assess_face_capture(image_bgr, require_liveness=False):
 
     liveness = check_liveness(image_bgr) if require_liveness else None
     if require_liveness and not liveness["face_detected"]:
-        return _empty_result(
-            message="Liveness detection failed because no clear face was found."
-        )
+        return _empty_result(message="Liveness detection failed because no clear face was found.")
     if require_liveness and not liveness["is_live"]:
         return _empty_result(
             message="Liveness detection failed. Use your live face, not a photo, screenshot, or video.",
@@ -236,9 +234,7 @@ def assess_face_capture(image_bgr, require_liveness=False):
 def validate_registration_capture(image_b64):
     image_bgr = _b64_to_bgr(image_b64)
     if image_bgr is None:
-        return _empty_result(
-            message="Unsupported image format. Please capture a fresh webcam photo."
-        )
+        return _empty_result(message="Unsupported image format. Please capture a fresh webcam photo.")
     return assess_face_capture(image_bgr, require_liveness=True)
 
 
@@ -250,6 +246,36 @@ def _similarity_score_from_deepface(result):
 
     threshold = float(result.get("threshold", 1.0)) or 1.0
     return max(0.0, min(100.0, (1.0 - (distance / threshold)) * 100.0))
+
+
+def _similarity_from_embeddings(embedding_a, embedding_b):
+    if embedding_a is None or embedding_b is None:
+        return 0.0
+    embedding_a = np.asarray(embedding_a, dtype=np.float32).reshape(-1)
+    embedding_b = np.asarray(embedding_b, dtype=np.float32).reshape(-1)
+    if embedding_a.size == 0 or embedding_b.size == 0:
+        return 0.0
+    norm_a = np.linalg.norm(embedding_a)
+    norm_b = np.linalg.norm(embedding_b)
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return float(np.dot(embedding_a / norm_a, embedding_b / norm_b) * 100.0)
+
+
+def _get_face_embedding(image_bgr):
+    backend = os.getenv("PROCTOR_FACE_MATCH_BACKEND", "auto").lower()
+    if backend in {"insightface", "auto"}:
+        insightface_backend = _get_insightface_backend()
+        if insightface_backend is not None:
+            try:
+                faces = insightface_backend.get(image_bgr)
+                if not faces:
+                    return None
+                face = max(faces, key=lambda item: item.bbox[2] * item.bbox[3])
+                return face.embedding
+            except Exception as exc:
+                logger.warning("InsightFace embedding extraction failed: %s", exc)
+    return None
 
 
 def verify_face_match_result(captured_image_b64, stored_image_b64, threshold=None):
@@ -282,6 +308,37 @@ def verify_face_match_result(captured_image_b64, stored_image_b64, threshold=Non
             score=0.0,
             threshold=threshold,
         )
+
+    try:
+        embedding_a = _get_face_embedding(captured_bgr)
+        embedding_b = _get_face_embedding(stored_bgr)
+        if embedding_a is not None and embedding_b is not None:
+            score = round(_similarity_from_embeddings(embedding_a, embedding_b), 2)
+            logger.info(
+                "Face match result: score=%.2f%% | threshold=%.0f%% | passed=%s",
+                score,
+                threshold,
+                score >= threshold,
+            )
+            if score < threshold:
+                return _empty_result(
+                    message=(
+                        f"Face verification failed. Match confidence {score:.1f}% is below "
+                        f"the required threshold of {threshold:.0f}%. "
+                        "Please ensure your face is fully visible, well-lit, and matches "
+                        "the photo registered with your account."
+                    ),
+                    score=score,
+                    threshold=threshold,
+                )
+            return _empty_result(
+                ok=True,
+                message=f"Face verified successfully. Match confidence: {score:.1f}%.",
+                score=score,
+                threshold=threshold,
+            )
+    except Exception as exc:
+        logger.warning("InsightFace verification failed: %s", exc)
 
     try:
         deepface = _get_deepface()

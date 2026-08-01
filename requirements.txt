@@ -14,11 +14,15 @@ numpy>=1.16.0,<2.0.0
 matplotlib>=3.3.3
 tensorflow>=2.2.0
 deepface>=0.0.49
+ultralytics>=8.2.0
+insightface>=0.7.3
+onnxruntime>=1.17.0
 
 # Computer vision
 opencv-contrib-python>=4.5.2.54,<4.11.0.0
 opencv-python>=4.5.2.54,<4.11.0.0
 dlib>=19.22.0
+mediapipe>=0.10.11
 
 # Utilities
 six>=1.12.0

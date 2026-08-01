@@ -37,6 +37,17 @@ except ImportError as e:
 # ── YOLO model ────────────────────────────────────────────────────────────────
 import wget
 
+try:
+    from ultralytics import YOLO as UltralyticsYOLO
+    ULTRALYTICS_AVAILABLE = True
+except Exception as exc:
+    ULTRALYTICS_AVAILABLE = False
+    UltralyticsYOLO = None
+    print(f"Ultralytics object detector unavailable: {exc}")
+
+_ultralytics_model = None
+
+
 def load_darknet_weights(model, weights_file):
     wf = open(weights_file, 'rb')
     major, minor, revision, seen, _ = np.fromfile(wf, dtype=np.int32, count=5)
@@ -82,6 +93,83 @@ def draw_outputs(img, outputs, class_names):
         img = cv2.putText(img, '{} {:.2f}'.format(
             class_names[int(classes[i])], objectness[i]),
             x1y1, cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 255), 2)
+    return img
+
+
+def get_object_detector():
+    global _ultralytics_model
+    backend = os.getenv("PROCTOR_OBJECT_BACKEND", "auto").lower()
+    if backend in {"ultralytics", "yolov8", "yolov11", "auto"} and ULTRALYTICS_AVAILABLE:
+        if _ultralytics_model is None:
+            try:
+                model_path = os.getenv("PROCTOR_OBJECT_MODEL_PATH", "")
+                if model_path and os.path.exists(model_path):
+                    _ultralytics_model = UltralyticsYOLO(model_path)
+                else:
+                    model_name = os.getenv("PROCTOR_OBJECT_MODEL_NAME", "yolov8n.pt")
+                    _ultralytics_model = UltralyticsYOLO(model_name)
+            except Exception as exc:
+                print(f"Ultralytics detector initialization failed: {exc}")
+                _ultralytics_model = False
+        return None if _ultralytics_model is False else _ultralytics_model
+    return None
+
+
+def detect_objects(image, class_names):
+    backend = os.getenv("PROCTOR_OBJECT_BACKEND", "auto").lower()
+    if backend in {"ultralytics", "yolov8", "yolov11", "auto"} and ULTRALYTICS_AVAILABLE:
+        model = get_object_detector()
+        if model is not None:
+            try:
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                results = model(rgb, conf=0.25, imgsz=320, stream=False, verbose=False)
+                detections = []
+                for result in results:
+                    for box in result.boxes.data.cpu().tolist():
+                        x1, y1, x2, y2, score, cls_id = box
+                        cls_id = int(cls_id)
+                        if cls_id < len(class_names):
+                            detections.append({
+                               "class_id": cls_id,
+                               "class_name": class_names[cls_id],
+                               "score": float(score),
+                               "bbox": [x1, y1, x2, y2],
+                            })
+                if detections:
+                    return detections
+            except Exception as exc:
+                print(f"Ultralytics object detection failed: {exc}")
+
+    yolo_input = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    yolo_input = cv2.resize(yolo_input, (320, 320)).astype(np.float32) / 255.0
+    yolo_input = np.expand_dims(yolo_input, 0)
+    boxes, scores, classes, nums = yolo(yolo_input)
+    detections = []
+    h, w = image.shape[:2]
+    for i in range(nums[0]):
+        cls_id = int(classes[0][i])
+        score = float(scores[0][i])
+        box = boxes[0][i]
+        x1 = int(box[0] * w)
+        y1 = int(box[1] * h)
+        x2 = int(box[2] * w)
+        y2 = int(box[3] * h)
+        if cls_id < len(class_names):
+            detections.append({
+                "class_id": cls_id,
+                "class_name": class_names[cls_id],
+                "score": score,
+                "bbox": [x1, y1, x2, y2],
+            })
+    return detections
+
+
+def draw_detections(img, detections, class_names):
+    for detection in detections:
+        x1, y1, x2, y2 = map(int, detection["bbox"])
+        img = cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+        label = f"{detection['class_name']} {detection['score']:.2f}"
+        img = cv2.putText(img, label, (x1, max(0, y1 - 5)), cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 0, 255), 2)
     return img
 
 
@@ -304,20 +392,16 @@ def get_frame(imgData):
     dist_coeffs = np.zeros((4, 1))
 
     # ── YOLO object detection ─────────────────────────────────────────────────
-    yolo_input = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    yolo_input = cv2.resize(yolo_input, (320, 320)).astype(np.float32) / 255.0
-    yolo_input = np.expand_dims(yolo_input, 0)
-
     class_names = [c.strip() for c in open("models/classes.TXT").readlines()]
-    boxes, scores, classes, nums = yolo(yolo_input)
+    detections = detect_objects(image, class_names)
 
-    count      = 0
+    count = 0
     mob_status = 0
     phone_confidence = 0.0
 
-    for i in range(nums[0]):
-        cls_id = int(classes[0][i])
-        score  = float(scores[0][i])
+    for detection in detections:
+        cls_id = detection["class_id"]
+        score = detection["score"]
         if cls_id == 0 and score >= float(os.getenv('YOLO_PERSON_SCORE_MIN', '0.38')):
             count += 1
         if cls_id == 67 and score >= float(os.getenv('YOLO_PHONE_SCORE_MIN', '0.52')):
@@ -325,7 +409,7 @@ def get_frame(imgData):
             phone_confidence = max(phone_confidence, score)
 
     person_status = 0 if count == 0 else (2 if count > 1 else 1)
-    image = draw_outputs(image, (boxes, scores, classes, nums), class_names)
+    image = draw_detections(image, detections, class_names)
 
     # Use the original BGR image (not YOLO-scaled) for all subsequent CV ops
     original_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
