@@ -12,16 +12,26 @@ WTForms-Components>=0.10.5
 pandas>=1.1.5
 numpy>=1.16.0,<2.0.0
 matplotlib>=3.3.3
-tensorflow>=2.2.0
+# Pin TensorFlow to 2.10.0 (last version with Windows CPU wheels and
+# protobuf<3.20 pin). Newer TF requires protobuf>=3.20, which conflicts
+# with the onnx<=1.12 / protobuf 3.19 line required by insightface.
+tensorflow==2.10.0
+protobuf==3.19.6
 deepface>=0.0.49
 ultralytics>=8.2.0
 insightface>=0.7.3
+# onnx 1.12 is the last release compatible with protobuf 3.19.x
+# (requires protobuf<=3.20.1,>=3.12.2). Newer onnx requires protobuf>=4.25.
+onnx==1.12.0
 onnxruntime>=1.17.0
 
 # Computer vision
 opencv-contrib-python>=4.5.2.54,<4.11.0.0
 opencv-python>=4.5.2.54,<4.11.0.0
-dlib>=19.22.0
+# dlib: use precompiled wheel (dlib-bin) on Windows to avoid building from source;
+# source build on Linux/macOS (dlib provides wheels for manylinux).
+dlib-bin>=19.22.0; sys_platform == "win32"
+dlib>=19.22.0; sys_platform != "win32"
 mediapipe>=0.10.11
 
 # Utilities

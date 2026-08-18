@@ -45,14 +45,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 app = Flask(__name__)
+app.secret_key = os.getenv('SECRET_KEY', 'myproctor_secret_key_123')
 
 # Disable CSRF for plain HTML forms (they use request.form directly, not FlaskForm)
 # FlaskForms used for file upload still get CSRF via their own meta
 app.config['WTF_CSRF_ENABLED'] = False
+app.config['WTF_CSRF_SECRET_KEY'] = os.getenv('WTF_CSRF_SECRET_KEY', app.secret_key)
 
 app.config['MYSQL_HOST'] = os.getenv('MYSQL_HOST', 'localhost')
 app.config['MYSQL_USER'] = os.getenv('MYSQL_USER', 'root')
 app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD', 'ritik')
+app.config['MYSQL_PORT'] = int(os.getenv('MYSQL_PORT', 3306))
 app.config['MYSQL_DB'] = os.getenv('MYSQL_DB', 'myproctor')
 app.config['MYSQL_CURSORCLASS'] = os.getenv('MYSQL_CURSORCLASS', 'DictCursor')  # flask_mysqldb uses this directly
 
@@ -74,8 +77,15 @@ session_cookie_samesite = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 if session_cookie_samesite.lower() == 'none' and not app.config['SESSION_COOKIE_SECURE']:
     session_cookie_samesite = 'Lax'
 app.config['SESSION_COOKIE_SAMESITE'] = session_cookie_samesite
+app.config['SESSION_PERMANENT'] = os.getenv('SESSION_PERMANENT', 'True').lower() == 'true'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+    seconds=int(os.getenv('PERMANENT_SESSION_LIFETIME', 604800))
+)
 
 app.config["TEMPLATES_AUTO_RELOAD"] = os.getenv('TEMPLATES_AUTO_RELOAD', 'True').lower() == 'true'
+app.config['DEBUG'] = os.getenv('DEBUG', 'False').lower() == 'true'
+app.config['TESTING'] = os.getenv('TESTING', 'False').lower() == 'true'
+app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 16777216))
 
 stripe_keys = {
     "secret_key": os.getenv('STRIPE_SECRET_KEY', 'dummy'),
@@ -91,8 +101,6 @@ sess.init_app(app)
 
 cors = CORS(app)
 app.config['CORS_HEADERS'] = 'Content-Type'
-
-app.secret_key = 'myproctor_secret_key_123'
 
 mysql = MySQL(app)
 
