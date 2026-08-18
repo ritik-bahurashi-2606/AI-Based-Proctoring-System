@@ -1523,6 +1523,11 @@ def create_test_lqa():
 			ef = read_csv_safe(filestream)
 			fields = ['qid','q','marks']
 			df = pd.DataFrame(ef, columns = fields)
+			# Drop empty rows and clean NaN values to prevent database errors
+			df = df.dropna(subset=['qid', 'q'])
+			df['qid'] = df['qid'].astype(str).str.strip()
+			df['q'] = df['q'].astype(str).str.strip()
+			df['marks'] = pd.to_numeric(df['marks'], errors='coerce').fillna(1).astype(int)
 			cur = mysql.connection.cursor()
 			ecc = examcreditscheck()
 			if ecc:
@@ -1628,6 +1633,13 @@ def create_test():
 			ef = read_csv_safe(filestream)
 			fields = ['qid','q','a','b','c','d','ans','marks']
 			df = pd.DataFrame(ef, columns = fields)
+			# Drop empty rows and clean NaN values to prevent database errors
+			df = df.dropna(subset=['qid', 'q'])
+			for col in ['a', 'b', 'c', 'd', 'ans']:
+				df[col] = df[col].fillna("").astype(str).str.strip()
+			df['qid'] = df['qid'].astype(str).str.strip()
+			df['q'] = df['q'].astype(str).str.strip()
+			df['marks'] = pd.to_numeric(df['marks'], errors='coerce').fillna(1).astype(int)
 			cur = mysql.connection.cursor()
 			ecc = examcreditscheck()
 			if ecc:
