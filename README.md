@@ -18,8 +18,8 @@ AI-Based Proctoring System is a Flask web application for conducting online exam
 
 - Python and Flask
 - MySQL
-- OpenCV, dlib, TensorFlow, DeepFace
-- YOLO model weights for object detection
+- OpenCV, dlib/dlib-bin, TensorFlow, DeepFace, InsightFace
+- YOLOv3 weights plus optional Ultralytics YOLO models for object detection
 - HTML, CSS, and JavaScript templates
 
 ## Prerequisites
@@ -29,7 +29,7 @@ Install these before running the project:
 - Python 3.10 or newer
 - MySQL Server
 - Git LFS
-- Visual C++ build tools may be required for packages such as `dlib` on Windows
+- Python 3.10 is recommended on Windows because TensorFlow 2.10 is the last TensorFlow release with Windows CPU wheels
 
 ## Setup
 
@@ -79,7 +79,45 @@ On macOS/Linux:
 cp .env.example .env
 ```
 
-Update `.env` with your local MySQL credentials, mail settings, and application secrets.
+Update `.env` with your local MySQL credentials, mail settings, application secrets, and optional model backend settings.
+
+## Model Backend Configuration
+
+The model backend framework is configured with environment variables in `.env`.
+All backend variables default to `auto`, which selects the upgraded backend when
+its dependency/model is available and falls back to the legacy implementation
+when initialization fails.
+
+| Variable | Default | Supported values | Purpose |
+| --- | --- | --- | --- |
+| `PROCTOR_FACE_BACKEND` | `auto` | `auto`, `mediapipe`, `retinaface`, `opencv` | Face box detection during proctoring |
+| `PROCTOR_LANDMARK_BACKEND` | `auto` | `auto`, `mediapipe`, `tensorflow` | Face landmark detection for head/gaze signals |
+| `PROCTOR_FACE_MATCH_BACKEND` | `auto` | `auto`, `insightface`, `deepface` | Student login face matching |
+| `PROCTOR_OBJECT_BACKEND` | `auto` | `auto`, `ultralytics`, `yolov8`, `yolov11`, `yolov3` | Person/mobile object detection |
+
+Custom Ultralytics object models can be configured with:
+
+```env
+PROCTOR_OBJECT_BACKEND=ultralytics
+PROCTOR_OBJECT_MODEL_PATH=models/custom-proctor-model.pt
+```
+
+If `PROCTOR_OBJECT_MODEL_PATH` is empty or does not point to an existing file,
+the application uses `PROCTOR_OBJECT_MODEL_NAME` instead:
+
+```env
+PROCTOR_OBJECT_MODEL_NAME=yolov8n.pt
+```
+
+`yolov8n.pt` is the default model name and may be downloaded by Ultralytics on
+first use. Downloaded runtime model caches such as `yolov8n.pt` and
+`models/models/` are intentionally ignored by Git; commit only source code,
+configuration templates, and intentionally managed model assets.
+
+Invalid or unavailable upgraded backends fail gracefully by returning to the
+legacy OpenCV/TensorFlow/YOLOv3 path where that path exists. Face matching uses
+InsightFace first in `auto` mode and falls back to DeepFace if embeddings cannot
+be produced.
 
 ## Database Setup
 
