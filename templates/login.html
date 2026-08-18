@@ -4,134 +4,151 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 
-<main>
-<section class="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
-  <div class="container">
-    <div class="col-12 d-flex align-items-center justify-content-center">
-      <div class="bg-white shadow-soft border rounded border-light p-4 p-lg-5 w-100 fmxw-650">
+<main class="auth-centered-wrapper">
+  
+  <!-- ── Faint Proctoring Background Images ───────────────────────────────── -->
+  <div class="auth-bg-decor left-decor d-none d-xl-block">
+    <img src="{{ url_for('static', filename='live-proctoring.png') }}" alt="Live Proctoring Watermark">
+  </div>
+  <div class="auth-bg-decor right-decor d-none d-xl-block">
+    <img src="{{ url_for('static', filename='id-verification.png') }}" alt="ID Verification Watermark">
+  </div>
 
-        <div class="text-center text-md-center mb-4 mt-md-0">
-          <h1 class="mb-0 h3"><i class="fas fa-lock mr-2 text-primary"></i>Sign in to MyProctor.ai</h1>
-          <p class="text-muted small mt-1">Face verification is required for secure access.</p>
+  <!-- ── Centered Enterprise Auth Card ────────────────────────────────────── -->
+  <div class="auth-centered-card">
+    
+    <div class="auth-card-top-icon">
+      <i class="fas fa-lock"></i>
+    </div>
+
+    <div class="auth-card-header">
+      <h2>Sign in to MyProctor.ai</h2>
+      <p>Face verification is required for secure access.</p>
+    </div>
+
+    <!-- Flash & Alert Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }} border-0 shadow-sm rounded-lg mb-3" role="alert">
+          <i class="fas fa-info-circle mr-2"></i>{{ msg }}
         </div>
+      {% endfor %}
+    {% endwith %}
 
-        <div class="card-body">
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for cat, msg in messages %}
-              <div class="alert alert-{{ cat }} shadow-soft" role="alert">{{ msg }}</div>
-            {% endfor %}
-          {% endwith %}
-          {% if error %}
-          <div class="alert alert-danger shadow-soft" role="alert">
-            <i class="fas fa-exclamation-circle mr-1"></i>{{ error }}
-          </div>
-          {% endif %}
-          {% if success %}
-          <div class="alert alert-success shadow-soft" role="alert">
-            <i class="fas fa-check-circle mr-1"></i>{{ success }}
-          </div>
-          {% endif %}
+    {% if error %}
+    <div class="alert alert-danger border-0 shadow-sm rounded-lg mb-3" role="alert">
+      <i class="fas fa-exclamation-circle mr-2"></i>{{ error }}
+    </div>
+    {% endif %}
+    {% if success %}
+    <div class="alert alert-success border-0 shadow-sm rounded-lg mb-3" role="alert">
+      <i class="fas fa-check-circle mr-2"></i>{{ success }}
+    </div>
+    {% endif %}
 
-          <form action="/login" method="POST" class="mt-4" id="loginForm" enctype="multipart/form-data" onsubmit="return validateLoginForm()">
+    <form action="/login" method="POST" id="loginForm" enctype="multipart/form-data" onsubmit="return validateLoginForm()">
 
-            <!-- Email -->
-            <div class="form-group">
-              <label for="email">Email</label>
-              <div class="input-group mb-3">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><span class="fas fa-envelope"></span></span>
-                </div>
-                <input name="email" id="email" class="form-control" placeholder="example@company.com" type="email" required>
-              </div>
-            </div>
-
-            <!-- Password -->
-            <div class="form-group">
-              <label for="password">Password</label>
-              <div class="input-group mb-3">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><span class="fas fa-unlock-alt"></span></span>
-                </div>
-                <input name="password" id="password" type="password" class="form-control" placeholder="Password" required>
-              </div>
-            </div>
-
-            <!-- User Type -->
-            <div class="form-group">
-              <label for="user_type">User Type</label>
-              <select class="custom-select mb-3" id="user_type" name="user_type" required>
-                <option value="student">Student</option>
-                <option value="teacher">Professor / Teacher</option>
-              </select>
-            </div>
-
-            <!-- ── Face Verification Camera ────────────────────────────── -->
-            <div class="form-group">
-              <label><i class="fas fa-id-badge mr-1"></i>Face Verification
-                <span class="badge badge-danger ml-1">Required</span>
-              </label>
-
-              <div id="face-scan-box" style="position:relative; background:#0d1117; border-radius:12px;
-                   overflow:hidden; border:2px solid #007bff; text-align:center;">
-                <video id="stream" width="100%" height="260" autoplay playsinline muted
-                       style="display:block; border-radius:10px;"></video>
-                <canvas id="mp-canvas" style="position:absolute; top:0; left:0;
-                         width:100%; height:100%; pointer-events:none;"></canvas>
-                <!-- HUD bar -->
-                <div id="scan-hud" style="position:absolute; bottom:0; left:0; right:0;
-                     background:rgba(0,0,0,0.65); color:#4fc3f7; font-size:0.78rem;
-                     padding:6px; font-family:monospace; letter-spacing:1px;">
-                  <i class="fas fa-spinner fa-spin"></i>
-                  <span id="hud-text">Starting face scanner…</span>
-                </div>
-              </div>
-
-              <div id="snapshot" class="mt-2"></div>
-              <div id="camera-status" class="text-muted small mt-1"></div>
-
-              <div class="alert alert-info py-2 mt-2 mb-0" style="font-size:0.82rem;">
-                <i class="fas fa-info-circle"></i>
-                <strong>Note:</strong> Look directly at the camera. Face capture is
-                <strong>mandatory</strong> — no skip option is available.
-              </div>
-
-              <div class="d-flex mt-2" style="gap:10px;">
-                <button id="btn-capture" type="button" class="btn btn-primary flex-fill"
-                        onclick="captureSnapshot()" disabled>
-                  <i class="fas fa-camera"></i> Capture Image
-                </button>
-              </div>
-              <small class="text-muted d-block mt-1">
-                Wait for face detection, then click <strong>Capture Image</strong>.
-              </small>
-
-              <input type="hidden" id="image_hidden" name="image_hidden">
-            </div>
-            <!-- ── End Face Verification ────────────────────────────────── -->
-
-            <div class="d-flex justify-content-between align-items-center mb-4">
-              <div><a href="/lostpassword" class="font-weight-bold">Lost password?</a></div>
-            </div>
-
-            <button type="submit" class="btn btn-block btn-primary">
-              <i class="fas fa-sign-in-alt"></i> Sign in
-            </button>
-          </form>
-
-          <div class="d-block d-sm-flex justify-content-center align-items-center mt-4">
-            <span class="font-weight-normal">
-              Not registered?
-              <a href="/register" class="font-weight-bold">Create account</a>
-            </span>
-          </div>
+      <!-- Email -->
+      <div class="form-group-custom">
+        <label class="form-label-custom" for="email">Email address</label>
+        <div class="input-container">
+          <i class="fas fa-envelope input-icon-left"></i>
+          <input name="email" id="email" class="form-control-custom" placeholder="name@company.com" type="email" required>
         </div>
       </div>
+
+      <!-- Password -->
+      <div class="form-group-custom">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <label class="form-label-custom mb-0" for="password">Password</label>
+          <a href="/lostpassword" class="small font-weight-600 text-primary">Forgot password?</a>
+        </div>
+        <div class="input-container">
+          <i class="fas fa-lock input-icon-left"></i>
+          <input name="password" id="password" type="password" class="form-control-custom" placeholder="Enter your password" required>
+          <button type="button" class="btn btn-sm text-muted position-absolute" style="right:10px;" onclick="togglePwdVisibility('password', 'pwd-eye-login')">
+            <i class="fas fa-eye" id="pwd-eye-login"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- User Type -->
+      <div class="form-group-custom">
+        <label class="form-label-custom" for="user_type">User Type</label>
+        <div class="input-container">
+          <i class="fas fa-user-tag input-icon-left"></i>
+          <select class="form-control-custom select-custom" id="user_type" name="user_type" required>
+            <option value="student">Student</option>
+            <option value="teacher">Professor / Teacher</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ── Face Verification Camera ──────────────────────────────────────── -->
+      <div class="form-group-custom">
+        <label class="form-label-custom">
+          <span><i class="fas fa-id-badge mr-1 text-primary"></i> Face Verification</span>
+          <span class="badge-required">Required</span>
+        </label>
+
+        <div class="face-verification-card">
+          <div class="camera-preview-wrapper" id="face-scan-box">
+            <video id="stream" width="100%" height="190" autoplay playsinline muted></video>
+            <canvas id="mp-canvas" class="camera-overlay-canvas"></canvas>
+
+            <div id="scan-hud" class="scan-hud-bar">
+              <i class="fas fa-spinner fa-spin"></i>
+              <span id="hud-text">Starting camera scanner…</span>
+            </div>
+          </div>
+
+          <div id="snapshot" class="mt-2"></div>
+          <div id="camera-status" class="small mt-1 text-muted"></div>
+
+          <button id="btn-capture" type="button" class="btn-modern-primary w-100 mt-2" onclick="captureSnapshot()" disabled>
+            <i class="fas fa-camera mr-1"></i> Capture &amp; Verify Face
+          </button>
+          <small class="text-muted d-block mt-1" style="font-size:0.76rem;">Position your face inside the frame to activate</small>
+        </div>
+        <input type="hidden" id="image_hidden" name="image_hidden">
+      </div>
+      <!-- ── End Face Verification ────────────────────────────────────────── -->
+
+      <div class="custom-control custom-checkbox mb-4" style="font-size:0.85rem;">
+        <input type="checkbox" class="custom-control-input" id="rememberMe">
+        <label class="custom-control-label text-muted" for="rememberMe">Remember this device</label>
+      </div>
+
+      <button type="submit" class="btn-modern-primary w-100 py-3 font-weight-700">
+        Sign in to Account
+      </button>
+    </form>
+
+    <div class="text-center mt-4 pt-3 border-top">
+      <span class="text-muted small">Don't have an account?</span>
+      <a href="/register" class="font-weight-700 text-primary small ml-1">Create an account</a>
     </div>
   </div>
-</section>
+
+  <div class="text-center mt-4 text-muted small">
+    © <script>document.write(new Date().getFullYear())</script> MyProctor.ai. All rights reserved.
+  </div>
 </main>
 
 <script>
+// ── Show/Hide password toggle ──────────────────────────────────────────────────
+function togglePwdVisibility(inputId, eyeId) {
+  var input = document.getElementById(inputId);
+  var eye = document.getElementById(eyeId);
+  if (input.type === 'password') {
+    input.type = 'text';
+    eye.className = 'fas fa-eye-slash';
+  } else {
+    input.type = 'password';
+    eye.className = 'fas fa-eye';
+  }
+}
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 var videoEl      = document.getElementById('stream');
 var mpCanvas     = document.getElementById('mp-canvas');
@@ -168,7 +185,7 @@ function initMediaPipe() {
     console.warn('MediaPipe not loaded:', e);
     faceDetected = true;
     btnCapture.disabled = false;
-    hudText.innerHTML = '<i class="fas fa-camera"></i> Ready — Click Capture Image';
+    hudText.innerHTML = '<i class="fas fa-camera"></i> Ready — Click Capture & Verify';
   }
 }
 
@@ -180,12 +197,12 @@ function onFaceMeshResults(results) {
   if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
     faceDetected = true;
     btnCapture.disabled = false;
-    hudText.innerHTML = '<i class="fas fa-check-circle"></i> Face detected — Click Capture Image';
+    hudText.innerHTML = '<i class="fas fa-check-circle text-success"></i> Face detected — Click Capture & Verify';
     drawMesh(results.multiFaceLandmarks[0]);
   } else {
     faceDetected = false;
     btnCapture.disabled = true;
-    hudText.innerHTML = '<i class="fas fa-exclamation-triangle"></i> No face detected — position your face in the frame';
+    hudText.innerHTML = '<i class="fas fa-exclamation-triangle text-warning"></i> Position face in frame';
   }
 }
 
@@ -260,8 +277,8 @@ function captureSnapshot() {
 
   var img = new Image();
   img.src = dataURL;
-  img.style.cssText = 'width:100%;border-radius:8px;margin-top:6px;';
-  snapshotDiv.innerHTML = '<p class="text-success small mt-1"><i class="fas fa-check"></i> Photo captured! Face scan complete.</p>';
+  img.style.cssText = 'width:100%;border-radius:10px;margin-top:6px;border:2px solid #10B981;';
+  snapshotDiv.innerHTML = '<p class="text-success small mt-1 font-weight-bold"><i class="fas fa-check-circle mr-1"></i> Photo captured! Face scan complete.</p>';
   snapshotDiv.prepend(img);
 
   videoEl.style.display = 'none';
@@ -272,19 +289,19 @@ function captureSnapshot() {
   document.getElementById('image_hidden').value = base64;
   imageCaptured = true;
 
-  btnCapture.innerHTML = '<i class="fas fa-redo"></i> Recapture';
-  btnCapture.className = 'btn btn-success flex-fill';
+  btnCapture.innerHTML = '<i class="fas fa-redo mr-1"></i> Recapture Photo';
+  btnCapture.className = 'btn-modern-secondary w-100 mt-2';
   btnCapture.disabled  = false;
   btnCapture.onclick   = function() {
     videoEl.style.display = 'block';
     snapshotDiv.innerHTML = '';
     imageCaptured = false;
     document.getElementById('image_hidden').value = '';
-    btnCapture.innerHTML = '<i class="fas fa-camera"></i> Capture Image';
-    btnCapture.className = 'btn btn-primary flex-fill';
+    btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i> Capture & Verify Face';
+    btnCapture.className = 'btn-modern-primary w-100 mt-2';
     btnCapture.disabled  = !faceDetected;
     btnCapture.onclick   = captureSnapshot;
-    document.getElementById('scan-hud').style.display = 'block';
+    document.getElementById('scan-hud').style.display = 'flex';
     if (mpFrameTimer === null) processFrame();
   };
 }
@@ -293,7 +310,7 @@ function captureSnapshot() {
 function validateLoginForm() {
   var imgVal = document.getElementById('image_hidden').value;
   if (!imageCaptured || !imgVal || imgVal === '' || imgVal === 'no_camera') {
-    alert('Face photo is required to sign in. Please wait for face detection and click "Capture Image".');
+    alert('Face photo is required to sign in. Please wait for face detection and click "Capture & Verify Face".');
     return false;
   }
   return true;

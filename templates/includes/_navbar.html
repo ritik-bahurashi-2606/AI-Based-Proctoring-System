@@ -1,99 +1,99 @@
 <script src="{{ url_for('static', filename='volt/vendor/sweetalert2/dist/sweetalert2.all.min.js') }}"></script>
-<script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
 <header class="header-global">
-   <nav id="navbar-main" class="navbar navbar-main navbar-expand-lg navbar-theme-primary bg-white fixed-top"> 
-<div class="container">
-    <a class="navbar-brand" href="/"><span style="font-size:18px;"><center><lottie-player src="https://assets1.lottiefiles.com/packages/lf20_wEt2nn.json"  background="transparent"  speed="1"  style="width: 70px; height: 50px;"  loop  autoplay></lottie-player>MyProctor.ai</center></span></a>
-    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon">   
-        <i class="fas fa-bars" style="color:#1c2540; font-size:28px;"></i>
-    </span>
-    </button>  
-   <div class="collapse navbar-collapse" id="navbarSupportedContent">
-     <ul class="nav navbar-nav ml-auto">
-      {% if session.logged_in %}
-      {% if session.user_role == "student" %}
-      <li class="nav-item ">
-        <a class="nav-link" id="active1" href="/student_index"><span class="fas fa-columns" > Dashboard</span></a></li>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" id="active2" href="/changepassword_student"><span class="fas fa-key" > Change Password</span></a></li>
-      </li>
-      {% endif %}
-      {% if session.user_role == "teacher" %}
-      <li class="nav-item ">
-        <a class="nav-link" id="active1" href="/professor_index"><span class="fas fa-columns" > Dashboard</span></a></li>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" id="active2" href="/changepassword_professor"><span class="fas fa-key" > Change Password</span></a></li>
-      </li>
-      {% endif %}
-        <li class="nav-item">
-          <a class="nav-link" id="active3" href="/contact"><span class="fas fa-phone-alt" > Contact Us</span></a></li>
+  <nav class="navbar navbar-expand-lg navbar-custom fixed-top">
+    <div class="container">
+      <a class="navbar-brand-custom" href="/">
+        <div class="brand-icon">
+          <i class="fas fa-shield-alt"></i>
+        </div>
+        <span>MYPROCTOR.AI</span>
+      </a>
 
-          <li class="nav-item">
-            <a class="nav-link" id="active4" href="/faq"><span class="fas fa-question" > FAQ</span></a></li>
+      <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarContent"
+              aria-controls="navbarContent" aria-expanded="false" aria-label="Toggle navigation">
+        <i class="fas fa-bars" style="color: #0B1035; font-size: 22px;"></i>
+      </button>
 
+      <div class="collapse navbar-collapse" id="navbarContent">
+        <ul class="navbar-nav mx-auto align-items-lg-center">
           <li class="nav-item">
-            <a class="nav-link" id="active4" href ="#" onclick="return funLogout()" class="btn btn-secondary text-dark btn-xs"><span class="fas fa-sign-out-alt" > Logout</span></a></li>
-    {% else %}
-    <li class="nav-item">
-      <a class="nav-link" id="active6"  href="/login"><span class="fas fa-sign-in-alt" > Login</span></a></li>
-    </li>
-      <li class="nav-item">
-        <a class="nav-link" id="active5" href="/register"><span class="fas fa-user-plus" > Register</span></a></li>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" id="active8"  href="/contact"><span class="fas fa-phone-alt" > Contact Us</span></a></li>
-</li>  
-      <li class="nav-item">
-        <a class="nav-link" id="active7"  href="/faq"><span class="fas fa-question" > FAQ</span></a></li>
-              </li>   
- {% endif %}
-	  </ul>
-	</div>
-	</div>
-</nav>
+            <a class="nav-link-custom" href="/">Home</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link-custom" href="/#features">Features</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link-custom" href="/#how-it-works">How It Works</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link-custom" href="/faq">About Us &amp; FAQ</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link-custom" href="/contact">Contact</a>
+          </li>
+        </ul>
+
+        <div class="d-flex align-items-center gap-3">
+          {% if session.logged_in %}
+            {% if session.user_role == "student" %}
+              <a href="/student_index" class="btn btn-modern-secondary py-2 px-3">
+                <i class="fas fa-columns mr-1"></i> Dashboard
+              </a>
+              <a href="/changepassword_student" class="nav-link-custom">
+                <i class="fas fa-key mr-1"></i> Password
+              </a>
+            {% elif session.user_role == "teacher" %}
+              <a href="/professor_index" class="btn btn-modern-secondary py-2 px-3">
+                <i class="fas fa-columns mr-1"></i> Dashboard
+              </a>
+              <a href="/changepassword_professor" class="nav-link-custom">
+                <i class="fas fa-key mr-1"></i> Password
+              </a>
+            {% endif %}
+            <button onclick="return funLogout()" class="btn btn-modern-outline py-2 px-3 ml-2">
+              <i class="fas fa-sign-out-alt mr-1"></i> Logout
+            </button>
+          {% else %}
+            <a href="/login" class="nav-link-custom font-weight-600 mr-2">Login</a>
+            <a href="/register" class="btn btn-modern-primary py-2 px-4">
+              Get Started
+            </a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </nav>
 </header>
+
 <script>
-   function funLogout () {
-swal.fire({
-  title: 'Are you sure?',
-  text: "Do you really want to logout?",
-  icon: 'warning',
-  showCancelButton: true,
-  confirmButtonText: 'Yes, Logout me!',
-  cancelButtonText: 'No!',
-  confirmButtonColor: '#d33',
-  cancelButtonColor: '#202124',
-  reverseButtons: true
-}).then((result) => {
-  if (result.isConfirmed) {
-              $.ajax({
-                    type: "POST",
-                    url: "/logout",
-                    success: function(response){
-                      if(response=="success")
-                      {
-                      console.log(response);
-    window.location.href = "/";
-                      }
-}
-                });  
+function funLogout() {
+  swal.fire({
+    title: 'Are you sure?',
+    text: "Do you really want to logout?",
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Logout!',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4338CA',
+    cancelButtonColor: '#64748B',
+    reverseButtons: true
+  }).then((result) => {
+    if (result.isConfirmed) {
+      $.ajax({
+        type: "POST",
+        url: "/logout",
+        success: function(response){
+          if(response == "success") {
+            window.location.href = "/";
+          }
+        }
+      });  
       swal.fire(
-      'Success!',
-      'You are successfully has been sign out from the system.',
-      'success'
-    )
-  } else if (
-    result.dismiss === Swal.DismissReason.cancel
-  ) {
-    swal.fire(
-      'Cancelled',
-      'Logout cancelled.',
-      'error'
-    )
-  }
-})
+        'Signed Out',
+        'You have successfully signed out.',
+        'success'
+      );
+    }
+  });
 }
 </script>

@@ -3,206 +3,201 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 
 <style>
-/* ── Field error highlight ──────────────────────────────────── */
-.field-error .form-control,
-.field-error .custom-select { border-color:#dc3545 !important; box-shadow:0 0 0 .2rem rgba(220,53,69,.18) !important; }
-.field-error .field-msg { display:block !important; }
-.field-msg { display:none; font-size:.8rem; color:#dc3545; margin-top:3px; }
-.field-ok .form-control,
-.field-ok .custom-select { border-color:#28a745 !important; }
+/* Field validation styling */
+.is-invalid { border-color: var(--status-error) !important; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important; }
+.is-valid { border-color: var(--status-success) !important; }
+.field-msg { display: none; font-size: 0.8rem; color: var(--status-error); margin-top: 4px; }
 
-/* ── Password strength bar ──────────────────────────────────── */
-#pwd-strength-bar { height:5px; border-radius:4px; transition:all .35s; background:#e9ecef; margin-top:5px; }
-#pwd-strength-bar .bar-fill { height:100%; border-radius:4px; width:0; transition:width .35s, background .35s; }
-#pwd-strength-label { font-size:.75rem; margin-top:2px; }
-
-/* ── Loading overlay ────────────────────────────────────────── */
+/* Loading Overlay */
 #loading-overlay {
-  display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
-  z-index:9999; align-items:center; justify-content:center; flex-direction:column;
+  display: none; position: fixed; inset: 0; background: rgba(11, 16, 53, 0.75);
+  z-index: 9999; align-items: center; justify-content: center; flex-direction: column;
+  backdrop-filter: blur(6px);
 }
-#loading-overlay.active { display:flex; }
-#loading-overlay .spinner-text { color:#fff; margin-top:14px; font-size:1rem; }
-
-/* ── Error alert icon ───────────────────────────────────────── */
-.alert-icon { font-size:1.15rem; margin-right:6px; vertical-align:middle; }
+#loading-overlay.active { display: flex; }
+#loading-overlay .spinner-text { color: #ffffff; margin-top: 16px; font-weight: 600; font-size: 1.02rem; }
 </style>
 
-<!-- Loading overlay -->
+<!-- Loading Overlay -->
 <div id="loading-overlay">
-  <div class="spinner-border text-light" style="width:3rem;height:3rem;" role="status"></div>
-  <div class="spinner-text" id="loading-text">Submitting registration…</div>
+  <div class="spinner-border text-primary" style="width: 3.2rem; height: 3.2rem;" role="status"></div>
+  <div class="spinner-text" id="loading-text">Verifying liveness &amp; creating account…</div>
 </div>
 
-<main>
-<section class="d-flex align-items-center my-5 mt-lg-6 mb-lg-5">
-  <div class="container">
-    <div class="col-12 d-flex align-items-center justify-content-center">
-      <div class="bg-white shadow-soft border rounded border-light p-4 p-lg-5 w-100 fmxw-650">
+<main class="auth-centered-wrapper">
+  
+  <!-- ── Faint Proctoring Background Images ───────────────────────────────── -->
+  <div class="auth-bg-decor left-decor d-none d-xl-block">
+    <img src="{{ url_for('static', filename='mettlverify.jpg') }}" alt="Authentication Watermark">
+  </div>
+  <div class="auth-bg-decor right-decor d-none d-xl-block">
+    <img src="{{ url_for('static', filename='secure_login.png') }}" alt="Security Watermark">
+  </div>
 
-        <div class="text-center mb-4">
-          <h1 class="mb-0 h3"><i class="fas fa-user-plus mr-2 text-primary"></i>Create an Account</h1>
-          <p class="text-muted small mt-1">Liveness verification is required during registration.</p>
+  <!-- ── Centered Enterprise Auth Card ────────────────────────────────────── -->
+  <div class="auth-centered-card">
+    
+    <div class="auth-card-top-icon">
+      <i class="fas fa-user-plus"></i>
+    </div>
+
+    <div class="auth-card-header">
+      <h2>Create an Account</h2>
+      <p>Face verification is required during registration.</p>
+    </div>
+
+    <!-- Flash & Server Error Banners -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }} border-0 shadow-sm rounded-lg mb-3" role="alert">
+          <i class="fas fa-info-circle mr-2"></i>{{ msg }}
         </div>
+      {% endfor %}
+    {% endwith %}
 
-        <div class="card-body">
-          <!-- ── Server-side error banner ────────────────────── -->
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% for cat, msg in messages %}
-              <div class="alert alert-{{ cat }} shadow-soft d-flex align-items-start" role="alert">
-                <i class="fas fa-info-circle alert-icon mt-1"></i><span>{{ msg }}</span>
-              </div>
-            {% endfor %}
-          {% endwith %}
-
-          {% if error %}
-          <div class="alert alert-danger shadow-soft d-flex align-items-start" role="alert" id="server-error-box">
-            <i class="fas fa-exclamation-circle alert-icon mt-1"></i>
-            <div>
-              <strong>Registration failed:</strong> {{ error }}
-              {% if field == 'face' %}
-              <br><small>💡 Tip: Ensure good lighting, look straight at the camera, and avoid glasses glare.</small>
-              {% elif field == 'password' %}
-              <br><small>💡 Tip: Use at least 8 characters with a mix of letters and numbers.</small>
-              {% elif field == 'email' %}
-              <br><small>💡 Tip: Check the email format (e.g. name@domain.com) or try logging in if you already have an account.</small>
-              {% endif %}
-            </div>
-          </div>
-          {% endif %}
-
-          <form action="/register" method="POST" id="registerForm"
-                enctype="multipart/form-data" onsubmit="return validateForm(event)">
-
-            <!-- ── Email ──────────────────────────────────────── -->
-            <div class="form-group" id="grp-email"
-                 {% if field == 'email' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
-              <label for="email">EMAIL</label>
-              <div class="input-group mb-1">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><i class="fas fa-envelope"></i></span>
-                </div>
-                <input name="email" type="email" class="form-control {% if field=='email' %}is-invalid{% endif %}"
-                       id="email" placeholder="example@company.com"
-                       oninput="validateEmail(this)" required>
-              </div>
-              <small class="field-msg" id="email-msg"></small>
-            </div>
-
-            <!-- ── Full Name ──────────────────────────────────── -->
-            <div class="form-group" id="grp-name"
-                 {% if field == 'name' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
-              <label for="name">FULL NAME</label>
-              <div class="input-group mb-1">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><i class="fas fa-user"></i></span>
-                </div>
-                <input name="name" type="text" class="form-control {% if field=='name' %}is-invalid{% endif %}"
-                       id="name" placeholder="John Doe"
-                       oninput="validateName(this)" required>
-              </div>
-              <small class="field-msg" id="name-msg"></small>
-            </div>
-
-            <!-- ── Password + strength meter ─────────────────── -->
-            <div class="form-group" id="grp-password"
-                 {% if field == 'password' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
-              <label for="password">PASSWORD</label>
-              <div class="input-group mb-1">
-                <div class="input-group-prepend">
-                  <span class="input-group-text"><i class="fas fa-lock"></i></span>
-                </div>
-                <input name="password" type="password" class="form-control {% if field=='password' %}is-invalid{% endif %}"
-                       id="password" placeholder="Min. 8 characters"
-                       oninput="checkPasswordStrength(this.value)" required>
-                <div class="input-group-append">
-                  <button type="button" class="btn btn-outline-secondary btn-sm px-2"
-                          onclick="togglePwd()" title="Show/hide password">
-                    <i class="fas fa-eye" id="pwd-eye"></i>
-                  </button>
-                </div>
-              </div>
-              <div id="pwd-strength-bar"><div class="bar-fill" id="bar-fill"></div></div>
-              <div id="pwd-strength-label" class="text-muted"></div>
-              <small class="field-msg" id="password-msg"></small>
-            </div>
-
-            <!-- ── User Type ──────────────────────────────────── -->
-            <div class="form-group">
-              <label for="user_type_sel">USER TYPE</label>
-              <select class="custom-select" id="user_type_sel" name="user_type" required>
-                <option value="student">Student</option>
-                <option value="teacher">Professor</option>
-              </select>
-            </div>
-
-            <!-- ── Live Face Capture ──────────────────────────── -->
-            <div class="form-group mt-3" id="grp-face"
-                 {% if field == 'face' %}style="border-left:3px solid #dc3545;padding-left:8px;"{% endif %}>
-              <label><i class="fas fa-id-card mr-1"></i>Live Face Capture
-                <span class="badge badge-danger ml-1">Required</span>
-              </label>
-
-              <!-- Inline quality/liveness feedback -->
-              <div id="quality-banner" class="alert py-2 mb-2 d-flex align-items-start"
-                   role="alert" style="font-size:.83rem; display:none !important;">
-                <i class="fas fa-circle mr-2 mt-1" id="qb-icon"></i>
-                <span id="qb-text"></span>
-              </div>
-
-              <div id="face-scan-box" style="position:relative; background:#0d1117;
-                   border-radius:12px; overflow:hidden;
-                   border:2px solid {% if field=='face' %}#dc3545{% else %}#28a745{% endif %};">
-                <video id="stream" width="100%" height="270" autoplay playsinline muted
-                       style="display:block; border-radius:10px;"></video>
-                <canvas id="mp-canvas" style="position:absolute;top:0;left:0;
-                         width:100%;height:100%;pointer-events:none;"></canvas>
-                <div id="scan-hud" style="position:absolute;bottom:0;left:0;right:0;
-                     background:rgba(0,0,0,.7);color:#4fc3f7;font-size:.77rem;
-                     padding:6px;font-family:monospace;letter-spacing:1px;">
-                  <i class="fas fa-spinner fa-spin"></i>
-                  <span id="hud-text">Starting liveness scanner…</span>
-                </div>
-              </div>
-
-              <div id="snapshot" class="mt-2"></div>
-              <div id="camera-status" class="small mt-1"></div>
-
-              <div class="alert alert-warning py-2 mt-2 mb-1" style="font-size:.81rem;">
-                <i class="fas fa-exclamation-triangle mr-1"></i>
-                <strong>Liveness required:</strong> Only your <em>live face</em> is accepted —
-                no photos or screenshots. Ensure good lighting and face the camera directly.
-              </div>
-
-              <div class="d-flex mt-2">
-                <button id="btn-capture" type="button" class="btn btn-success flex-fill"
-                        onclick="captureAndCheck()" disabled>
-                  <i class="fas fa-camera mr-1"></i>Capture &amp; Verify
-                </button>
-              </div>
-              <small class="text-muted d-block mt-1">
-                Wait for face detection, then click <strong>Capture &amp; Verify</strong>.
-              </small>
-              <small class="field-msg" id="face-msg">A verified face photo is required to register.</small>
-              <input type="hidden" id="image_hidden" name="image_hidden">
-            </div>
-
-            <button type="submit" id="btn-register" class="btn btn-primary btn-block mt-3">
-              <i class="fas fa-user-plus mr-1"></i>Create Account
-            </button>
-          </form>
-
-          <p class="mt-3 text-center">Already have an account?
-            <a href="/login" class="font-weight-bold">Sign in</a>.
-          </p>
-        </div>
+    {% if error %}
+    <div class="alert alert-danger border-0 shadow-sm rounded-lg mb-3" role="alert" id="server-error-box">
+      <i class="fas fa-exclamation-circle mr-2"></i>
+      <div>
+        <strong>Registration failed:</strong> {{ error }}
+        {% if field == 'face' %}
+        <br><small>💡 Tip: Ensure good lighting, look straight at the camera, and avoid glare.</small>
+        {% elif field == 'password' %}
+        <br><small>💡 Tip: Use at least 8 characters with letters and numbers.</small>
+        {% elif field == 'email' %}
+        <br><small>💡 Tip: Check email format or try logging in if you already registered.</small>
+        {% endif %}
       </div>
     </div>
+    {% endif %}
+
+    <form action="/register" method="POST" id="registerForm" enctype="multipart/form-data" onsubmit="return validateForm(event)">
+
+      <!-- Email -->
+      <div class="form-group-custom" id="grp-email">
+        <label class="form-label-custom" for="email">Email address</label>
+        <div class="input-container">
+          <i class="fas fa-envelope input-icon-left"></i>
+          <input name="email" type="email" class="form-control-custom {% if field=='email' %}is-invalid{% endif %}"
+                 id="email" placeholder="name@company.com" oninput="validateEmail(this)" required>
+        </div>
+        <small class="field-msg" id="email-msg"></small>
+      </div>
+
+      <!-- Full Name -->
+      <div class="form-group-custom" id="grp-name">
+        <label class="form-label-custom" for="name">Full Name</label>
+        <div class="input-container">
+          <i class="fas fa-user input-icon-left"></i>
+          <input name="name" type="text" class="form-control-custom {% if field=='name' %}is-invalid{% endif %}"
+                 id="name" placeholder="John Doe" oninput="validateName(this)" required>
+        </div>
+        <small class="field-msg" id="name-msg"></small>
+      </div>
+
+      <!-- Password -->
+      <div class="form-group-custom" id="grp-password">
+        <label class="form-label-custom" for="password">Password</label>
+        <div class="input-container">
+          <i class="fas fa-lock input-icon-left"></i>
+          <input name="password" type="password" class="form-control-custom {% if field=='password' %}is-invalid{% endif %}"
+                 id="password" placeholder="Min. 8 characters" oninput="checkPasswordStrength(this.value)" required>
+          <button type="button" class="btn btn-sm text-muted position-absolute" style="right:10px;" onclick="togglePwdVisibility('password', 'pwd-eye-reg')">
+            <i class="fas fa-eye" id="pwd-eye-reg"></i>
+          </button>
+        </div>
+        <div id="pwd-strength-bar" class="mt-2"><div class="bar-fill" id="bar-fill" style="height:4px; border-radius:2px;"></div></div>
+        <div id="pwd-strength-label" class="small mt-1 text-muted"></div>
+        <small class="field-msg" id="password-msg"></small>
+      </div>
+
+      <!-- User Type -->
+      <div class="form-group-custom">
+        <label class="form-label-custom" for="user_type_sel">User Type</label>
+        <div class="input-container">
+          <i class="fas fa-user-tag input-icon-left"></i>
+          <select class="form-control-custom select-custom" id="user_type_sel" name="user_type" required>
+            <option value="student">Student</option>
+            <option value="teacher">Professor</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ── Live Face Capture ────────────────────────────────────────────── -->
+      <div class="form-group-custom mt-3" id="grp-face">
+        <label class="form-label-custom">
+          <span><i class="fas fa-id-card mr-1 text-primary"></i> Live Face Capture</span>
+          <span class="badge-required">Required</span>
+        </label>
+
+        <!-- Quality Banner -->
+        <div id="quality-banner" class="alert py-2 mb-2 d-flex align-items-start rounded-lg"
+             role="alert" style="font-size:0.82rem; display:none !important;">
+          <i class="fas fa-circle mr-2 mt-1" id="qb-icon"></i>
+          <span id="qb-text"></span>
+        </div>
+
+        <div class="face-verification-card">
+          <div class="camera-preview-wrapper" id="face-scan-box">
+            <video id="stream" width="100%" height="190" autoplay playsinline muted></video>
+            <canvas id="mp-canvas" class="camera-overlay-canvas"></canvas>
+
+            <div id="scan-hud" class="scan-hud-bar">
+              <i class="fas fa-spinner fa-spin"></i>
+              <span id="hud-text">Starting camera scanner…</span>
+            </div>
+          </div>
+
+          <div id="snapshot" class="mt-2"></div>
+          <div id="camera-status" class="small mt-1 text-muted"></div>
+
+          <button id="btn-capture" type="button" class="btn-modern-primary w-100 mt-2" onclick="captureAndCheck()" disabled>
+            <i class="fas fa-camera mr-1"></i> Capture &amp; Verify Face
+          </button>
+          <small class="text-muted d-block mt-1" style="font-size:0.76rem;">Position your face inside the frame to activate</small>
+        </div>
+        <small class="field-msg" id="face-msg">A verified face photo is required to register.</small>
+        <input type="hidden" id="image_hidden" name="image_hidden">
+      </div>
+
+      <!-- Terms Checkbox -->
+      <div class="custom-control custom-checkbox mb-4" style="font-size:0.83rem;">
+        <input type="checkbox" class="custom-control-input" id="termsCheck" required>
+        <label class="custom-control-label text-muted" for="termsCheck">
+          I agree to the <a href="#" class="text-primary font-weight-600">Terms of Service</a> and <a href="#" class="text-primary font-weight-600">Privacy Policy</a>
+        </label>
+      </div>
+
+      <button type="submit" id="btn-register" class="btn-modern-primary w-100 py-3 font-weight-700">
+        Create Account
+      </button>
+    </form>
+
+    <div class="text-center mt-4 pt-3 border-top">
+      <span class="text-muted small">Already have an account?</span>
+      <a href="/login" class="font-weight-700 text-primary small ml-1">Sign in</a>
+    </div>
   </div>
-</section>
+
+  <div class="text-center mt-4 text-muted small">
+    © <script>document.write(new Date().getFullYear())</script> MyProctor.ai. All rights reserved.
+  </div>
 </main>
 
 <script>
+/* ── Show/Hide password toggle ────────────────────────────────────────────────── */
+function togglePwdVisibility(inputId, eyeId) {
+  var input = document.getElementById(inputId);
+  var eye = document.getElementById(eyeId);
+  if (input.type === 'password') {
+    input.type = 'text';
+    eye.className = 'fas fa-eye-slash';
+  } else {
+    input.type = 'password';
+    eye.className = 'fas fa-eye';
+  }
+}
+
 /* ── Global state ──────────────────────────────────────────────────────────── */
 var videoEl      = document.getElementById('stream');
 var mpCanvas     = document.getElementById('mp-canvas');
@@ -226,14 +221,14 @@ function showBanner(ok, msg) {
   var ic = document.getElementById('qb-icon');
   var tx = document.getElementById('qb-text');
   b.style.display = 'flex';
-  if (ok === null) {          // info/loading
-    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-info';
+  if (ok === null) {
+    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-info border-0 shadow-sm';
     ic.className = 'fas fa-spinner fa-spin mr-2 mt-1';
-  } else if (ok) {            // success
-    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-success';
+  } else if (ok) {
+    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-success border-0 shadow-sm';
     ic.className = 'fas fa-check-circle mr-2 mt-1';
-  } else {                    // failure
-    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-danger';
+  } else {
+    b.className = 'alert py-2 mb-2 d-flex align-items-start alert-danger border-0 shadow-sm';
     ic.className = 'fas fa-times-circle mr-2 mt-1';
   }
   tx.textContent = msg;
@@ -278,12 +273,6 @@ function validateName(el) {
 }
 
 /* ── Password strength meter ───────────────────────────────────────────────── */
-function togglePwd() {
-  var f = document.getElementById('password');
-  var e = document.getElementById('pwd-eye');
-  if (f.type === 'password') { f.type = 'text';  e.className = 'fas fa-eye-slash'; }
-  else                       { f.type = 'password'; e.className = 'fas fa-eye'; }
-}
 function checkPasswordStrength(val) {
   var fill  = document.getElementById('bar-fill');
   var label = document.getElementById('pwd-strength-label');
@@ -296,10 +285,10 @@ function checkPasswordStrength(val) {
   if (/[0-9]/.test(val)) score++;
   if (/[^A-Za-z0-9]/.test(val)) score++;
   var widths = ['20%','35%','55%','75%','100%'];
-  var colors = ['#dc3545','#fd7e14','#ffc107','#20c997','#28a745'];
+  var colors = ['#EF4444','#F97316','#F59E0B','#10B981','#16A34A'];
   var labels = ['Very weak','Weak','Fair','Strong','Very strong'];
   fill.style.width     = widths[score-1] || '0';
-  fill.style.background= colors[score-1] || '#e9ecef';
+  fill.style.background= colors[score-1] || '#E2E8F0';
   label.textContent    = labels[score-1] || '';
   label.style.color    = colors[score-1] || '';
   if (val.length < 8) {
@@ -334,12 +323,12 @@ function onFaceMeshResults(res) {
   if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
     faceDetected = true;
     btnCapture.disabled = false;
-    hudText.innerHTML = '<i class="fas fa-check-circle" style="color:#4caf50"></i> Live face detected — Click Capture & Verify';
+    hudText.innerHTML = '<i class="fas fa-check-circle text-success"></i> Face detected — Click Capture & Verify';
     drawMesh(res.multiFaceLandmarks[0]);
   } else {
     faceDetected = false;
     btnCapture.disabled = true;
-    hudText.innerHTML = '<i class="fas fa-exclamation-triangle" style="color:#ff9800"></i> No face — position yourself in the frame';
+    hudText.innerHTML = '<i class="fas fa-exclamation-triangle text-warning"></i> Position face in frame';
   }
 }
 function drawMesh(lms) {
@@ -374,18 +363,18 @@ function startCamera() {
       cameraStream = ms;
       videoEl.srcObject = ms;
       videoEl.play();
-      hudText.innerHTML = '<i class="fas fa-search"></i> Scanning for live face…';
+      hudText.innerHTML = '<i class="fas fa-search"></i> Scanning for camera…';
       initMediaPipe();
       processFrame();
     })
     .catch(function(err) {
       var msg = 'Camera permission is required for registration. ';
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        msg += 'You denied camera access — please allow it in your browser settings and reload.';
+        msg += 'You denied camera access — please allow it in browser settings and reload.';
       } else if (err.name === 'NotFoundError') {
-        msg += 'No camera was found on this device.';
+        msg += 'No camera found on this device.';
       } else {
-        msg += 'Camera blocked or unavailable (' + err.name + '). Please reload and try again.';
+        msg += 'Camera blocked or unavailable (' + err.name + '). Please reload.';
       }
       cameraStatus.innerHTML = '<span class="text-danger"><i class="fas fa-times-circle mr-1"></i>' + msg + '</span>';
       hudText.innerHTML = '<i class="fas fa-times-circle"></i> Camera unavailable';
@@ -421,11 +410,11 @@ function captureAndCheck() {
       clearField('face');
 
       var img = new Image(); img.src = dataURL;
-      img.style.cssText = 'width:100%;border-radius:8px;margin-top:6px;';
+      img.style.cssText = 'width:100%;border-radius:10px;margin-top:6px;border:2px solid #10B981;';
       snapshotDiv.innerHTML = '';
       snapshotDiv.appendChild(img);
       snapshotDiv.insertAdjacentHTML('beforeend',
-        '<p class="text-success small mt-1"><i class="fas fa-check mr-1"></i>Liveness verified. Click <strong>Create Account</strong>.</p>');
+        '<p class="text-success small mt-1 font-weight-bold"><i class="fas fa-check-circle mr-1"></i>Liveness verified. Click <strong>Create Account</strong>.</p>');
 
       videoEl.style.display = 'none';
       if (mpFrameTimer) { cancelAnimationFrame(mpFrameTimer); mpFrameTimer = null; }
@@ -433,26 +422,24 @@ function captureAndCheck() {
       document.getElementById('scan-hud').style.display = 'none';
 
       btnCapture.innerHTML = '<i class="fas fa-redo mr-1"></i>Retake Photo';
-      btnCapture.className = 'btn btn-warning flex-fill';
+      btnCapture.className = 'btn-modern-secondary w-100 mt-2';
       btnCapture.disabled  = false;
       btnCapture.onclick   = resetCapture;
     } else {
-      /* Show specific rejection reason inline */
       showBanner(false, res.message || 'Face check failed. Please retake the photo.');
       setFieldError('face', res.message || 'Face verification failed. Please retake the photo.');
       btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i>Retake Photo';
-      btnCapture.className = 'btn btn-danger flex-fill';
+      btnCapture.className = 'btn btn-danger w-100 mt-2';
       btnCapture.disabled  = false;
       btnCapture.onclick   = captureAndCheck;
     }
   })
   .catch(function() {
-    /* Network error — accept optimistically; server will re-validate on submit */
     showBanner(true, 'Quality check unavailable — photo accepted. Server will verify on submit.');
     document.getElementById('image_hidden').value = b64;
     imageCaptured = true;
     btnCapture.innerHTML = '<i class="fas fa-redo mr-1"></i>Retake Photo';
-    btnCapture.className = 'btn btn-warning flex-fill';
+    btnCapture.className = 'btn-modern-secondary w-100 mt-2';
     btnCapture.disabled  = false;
     btnCapture.onclick   = resetCapture;
   });
@@ -465,11 +452,11 @@ function resetCapture() {
   document.getElementById('image_hidden').value = '';
   hideBanner();
   clearField('face');
-  btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i>Capture & Verify';
-  btnCapture.className = 'btn btn-success flex-fill';
+  btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i>Capture & Verify Face';
+  btnCapture.className = 'btn-modern-primary w-100 mt-2';
   btnCapture.disabled  = !faceDetected;
   btnCapture.onclick   = captureAndCheck;
-  document.getElementById('scan-hud').style.display = 'block';
+  document.getElementById('scan-hud').style.display = 'flex';
   if (!mpFrameTimer) processFrame();
 }
 
@@ -495,19 +482,17 @@ function validateForm(e) {
   }
 
   if (!imageCaptured || !img || img === '' || img === 'no_camera') {
-    setFieldError('face','A verified live face photo is required. Click "Capture & Verify" first.');
+    setFieldError('face','A verified live face photo is required. Click "Capture & Verify Face" first.');
     showBanner(false, 'Face photo is missing. Please complete the liveness check above.');
     ok = false;
   }
 
   if (!ok) {
-    /* Scroll to first error */
     var first = document.querySelector('.is-invalid, .field-msg[style*="block"]');
-    if (first) first.closest('.form-group, .input-group') && first.scrollIntoView({behavior:'smooth', block:'center'});
+    if (first) first.closest('.form-group-custom') && first.scrollIntoView({behavior:'smooth', block:'center'});
     return false;
   }
 
-  /* Show loading overlay */
   document.getElementById('loading-text').textContent = 'Verifying and creating your account…';
   document.getElementById('loading-overlay').classList.add('active');
   document.getElementById('btn-register').disabled = true;

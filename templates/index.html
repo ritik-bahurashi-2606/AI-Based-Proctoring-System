@@ -1,547 +1,312 @@
 {% extends 'layout.html' %}
 {% block body %}
-<script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
-<html>
-<head>
-     <div class="container">
-        <div class="row justify-content-between align-items-center">
-            <div class="col">
-            <div class="card">
-                <div class="row card-body">
-                   <div class="col">
-                    <h1 class="display-2 mb-4">Exam Security.<br class="d-none d-md-inline"> Done Right.</h1>
-                    <h3 class="display-4 mb-4">Deter. Detect. Prevent.</h3>
-                    <p class="lead mb-4 text-muted">Online proctoring to advance your learning and testing program. Validate knowledge. Reduce costs. Expand access.</p>
-                    </div>
-                    <div class="col text-right">
-                        <img src="{{ url_for('static', filename='myproctoraiindex.gif') }}"/>
-                    </div>
-                                </div>
+<!-- ── HERO SECTION ───────────────────────────────────────────────────────── -->
+<section class="hero-wrapper">
+  <div class="container">
+    <div class="row align-items-center">
+      <!-- Left Hero Content -->
+      <div class="col-lg-6 mb-5 mb-lg-0">
+        <div class="hero-pill-tag">
+          <i class="fas fa-sparkles"></i> AI-Powered Proctoring Platform
+        </div>
+        <h1 class="hero-headline">
+          Exam Security.<br>
+          <span class="gradient-text">Done Right.</span>
+        </h1>
+        <h2 class="hero-subtitle">Deter. Detect. Prevent.</h2>
+        <p class="hero-description">
+          Advanced AI technology ensures integrity in online exams so you can focus on what matters — learning without limits.
+        </p>
+
+        <div class="hero-ctas">
+          <a href="/register" class="btn-modern-primary">
+            Get Started <i class="fas fa-arrow-right ml-1"></i>
+          </a>
+          <a href="/contact" class="btn-modern-secondary">
+            Request Demo
+          </a>
+        </div>
+
+        <div class="hero-badges-row">
+          <div class="hero-badge-card">
+            <div class="hero-badge-icon ai">
+              <i class="fas fa-microchip"></i>
             </div>
-        </div>
-    </div>
-    </div>
-
-    <section class="content content-bg">
-      <div class="container">
-      <div class="row">
-      <div class="col-md-10 offset-md-1 col-lg-8 offset-lg-2">
-      <h2 class="text-center mb-0">The MyProctor.ai Learning Integrity Platform</h2>
-      </div>
-      </div>
-
-      <div class="row align-items-center my-large">
-        <div class="col-md-6">
-        <div id="platform-exam_proctoring" class="platform-animation">
-          <lottie-player src="https://assets1.lottiefiles.com/packages/lf20_omszt4va.json"  background="transparent"  speed="1"  style="width: 300px; height: 300px;"  loop  autoplay></lottie-player>
-        </div>
-        </div>
-        <div class="col-md-6 col-lg-5 offset-lg-1">
-        <h1 class="display-2 mb-4">Our Mission</h1>
-        <p class="lead mb-4 text-muted">Making green exam assessment reach last mile across globe.</p>
-        </div>
-        </div>
-
-        <div class="row align-items-center my-large">
-          <div class="col-md-6 order-md-2 offset-lg-1 ">
-            <lottie-player src="https://assets1.lottiefiles.com/packages/lf20_fdLGjD.json"  background="transparent"  speed="1"  style="width: 600px; height: 500px;"  loop  autoplay></lottie-player>
+            <span>AI-Powered Detection</span>
           </div>
-          <div class="col-md-6 col-lg-5 order-md-1">
-          <h1 class="display-2 mb-4">Our Vision</h1>
-          <p class="lead mb-4 text-muted">We believe “Future of world starts in a Classroom” Our Vision is to invent & develop secure and future ready Ed-tech solutions featuring simple functionality.</p>
-          </div>
-          </div>
-
-      <div class="row align-items-center my-large">
-      <div class="col-md-6">
-      <div id="platform-exam_proctoring" class="platform-animation">
-        <img class="mb-3 mt-3" src="/static/admin-dashboard.png" alt="">
-      </div>
-      </div>
-      <div class="col-md-6 col-lg-5 offset-lg-1">
-      <h1 class="display-2 mb-4">Exam Proctoring</h1>
-      <p class="lead mb-4 text-muted">An all-inclusive remote monitoring solution, including Image verification and computer restrictions.
-      <ul class="feature-list mt-4">
-      <li>Automated Proctoring</li>
-      <li>Live Proctoring</li>
-      <li>Professional Review</li>
-      </ul>
-      </p>
-      </div>
-      </div>
-
-      <div class="row align-items-center my-large">
-        <div class="col-md-6 order-md-2 offset-lg-1 ">
-        <img class="mb-3 mt-3" src="/static/feature-platform-2.png" alt="">
-        </div>
-        <div class="col-md-6 col-lg-5 order-md-1">
-        <h1 class="display-2 mb-4">Content Protection</h1>
-        <p class="lead mb-4 text-muted">MyProctor.ai ensures exam integrity by preventing internet navigation, use of mobile devices, screen captures, printing or sharing.</p>
-        <ul class="feature-list mt-4">
-        <li>Distribution Prevention</li>
-        <li>Copy/Print/Download Restrictions</li>
-        </ul>
-        </div>
-        </div>
-
-
-      <div class="row align-items-center my-large">
-        <div class="col-md-6">
-        <img class="mb-3 mt-3" src="/static/feature-content-protection-2.png" alt="">
-        </div>
-        <div class="col-md-6 col-lg-5 offset-lg-1">
-        <h1 class="display-2 mb-4">Distribution Prevention</h1>
-        <p class="lead mb-4 text-muted">MyProctor.ai prevents test distribution through a host of adjustable settings to restrict the ability to copy and paste, print, download or make screen captures while automatically clearing caches and disabling extensions during the assessment to keep exam content secure.</p>
-        </div>
-        </div>
-
-        <div class="row align-items-center my-large">
-          <div class="col-md-6 order-md-2 offset-lg-1 ">
-            <img class="mb-3 mt-3" src="/static/id-verification.png" alt="">
-          </div>
-          <div class="col-md-6 col-lg-5 order-md-1">
-          <h1 class="display-2 mb-4">Image Verification</h1>
-          <p class="lead mb-4 text-muted">Identification is captured, analyzed and verified, then only allowed to login.</p>
-          <ul class="feature-list mt-4">
-          <li>Advanced facial detection technology</li>
-          <li>Automated Verification</li>
-          <li>Live Image Verification</li>
-          </ul>
-          </div>
-          </div>
-      
-      <div class="row align-items-center">
-      <div class="col-md-6">
-      <div id="platform-data_analytics" class="platform-animation mb-3 mt-3">
-      <img class="mb-3 mt-3" src="/static/Aggregate-Exam-Data.png" alt="">
-      </div>
-      </div>
-      <div class="col-md-6 col-lg-5 offset-lg-1">
-      <h1 class="display-2 mb-4">Data Analytics</h1>
-      <p class="lead mb-4 text-muted">Instant, objective data is immediately available after every assessment, with parameters set by instructors or administrators.</p>
-      <ul class="feature-list mt-4">
-      <li>Administrative Dashboard</li>
-      <li>Student Monitoring</li>
-      <li>Aggregate Exam Data</li>
-      </ul>
-      </div>
-      </div>
-
-      <div class="row align-items-center my-large">
-        <div class="col-md-6 order-md-2 offset-lg-1 ">
-          <img class="mb-3 mt-3" src="/static/admin-dashboard-1.png" alt="">
-        </div>
-        <div class="col-md-6 col-lg-5 order-md-1">
-        <h1 class="display-2 mb-4">Admin Dashboard</h1>
-        <p class="lead mb-4 text-muted">Create global settings and usage reports that give you actionable information by department, school or institution. Filter activity and reporting by course, test-taker, or exam.</p>
-        <p class="lead mb-4 text-muted">Manage exam parameters, computer requirements, account information, faculty controls, and Gradebook settings.</p>
-        </div>
-        </div>
-
-        <div class="row align-items-center">
-          <div class="col-md-6">
-          <div id="platform-professional_review" class="platform-animation mb-3 mt-3">
-          </div>
-          <img class="mb-3 mt-3" src="/static/professional-review.png" alt="">
-          </div>
-          <div class="col-md-6 col-lg-5 offset-lg-1">
-          <h1 class="display-2 mb-4">Professional Review</h1>
-          <p class="lead mb-4 text-muted">Our highly-trained experts are available to analyze exam proctoring for issues of academic dishonesty. We deliver detailed reporting same day, next day or in 3 days based on your needs.</p>
-          </div>
-          </div>
-
-
-          <div class="row align-items-center my-large">
-            <div class="col-md-6 order-md-2 offset-lg-1 ">
-              <img class="" src="/static/actionable-information.png" alt="">
+          <div class="hero-badge-card">
+            <div class="hero-badge-icon monitoring">
+              <i class="fas fa-video"></i>
             </div>
-            <div class="col-md-6 col-lg-5 order-md-1">
-            <h1 class="display-2 mb-4">Actionable Information</h1>
-            <p class="lead mb-4 text-muted">MyProctor.ai data analytics become instantly available after every assessment, and accumulate over time. This information is useful for quickly identifying unusual or suspicious behaviors that may indicate academic dishonesty.</p>
-            <p class="lead mb-4 text-muted">By flagging test-takers who may need help, MyProctor.ai is a valuable tool for boosting retention and improving learning outcomes.</p>
+            <span>Real-time Monitoring</span>
+          </div>
+          <div class="hero-badge-card">
+            <div class="hero-badge-icon secure">
+              <i class="fas fa-shield-alt"></i>
             </div>
-            </div>
+            <span>Secure &amp; Reliable</span>
+          </div>
+        </div>
+      </div>
 
-            <div class="row align-items-center">
-              <div class="col-md-6">
-              <div id="platform-professional_review" class="platform-animation mb-3 mt-3">
+      <!-- Right Hero Visual / Mockup UI -->
+      <div class="col-lg-6">
+        <div class="hero-visual-card">
+          <div class="mockup-header-bar">
+            <div class="mockup-dots">
+              <div class="mockup-dot red"></div>
+              <div class="mockup-dot yellow"></div>
+              <div class="mockup-dot green"></div>
+            </div>
+            <div class="small text-muted font-weight-bold">
+              <i class="fas fa-lock mr-1 text-primary"></i> myproctor.ai/dashboard
+            </div>
+            <div><span class="badge badge-success px-2 py-1">Live Feed</span></div>
+          </div>
+
+          <div class="mockup-body">
+            <div class="mockup-user-info">
+              <div>
+                <h6 class="mb-0 font-weight-bold">Hello, Candidate</h6>
+                <small class="text-muted"><i class="fas fa-circle text-success mr-1" style="font-size:8px;"></i> Exam In-Progress</small>
               </div>
-              <img class="mb-3 mt-3" src="/static/live-proctoring.png" alt="">
+              <div class="small bg-light px-2 py-1 rounded text-primary font-weight-bold">
+                <i class="fas fa-clock mr-1"></i> 00:45:12
               </div>
-              <div class="col-md-6 col-lg-5 offset-lg-1">
-              <h1 class="display-2 mb-4">Live Proctoring</h1>
-              <p class="lead mb-4 text-muted">It allows immediate intervention during an exam and provides full live reporting on demand.</p>
+            </div>
+
+            <!-- Scores -->
+            <div class="mockup-score-grid">
+              <div class="mockup-score-card">
+                <div class="val text-success">92%</div>
+                <div class="label">Focus Score</div>
               </div>
+              <div class="mockup-score-card">
+                <div class="val text-muted">0</div>
+                <div class="label">Incidents</div>
+              </div>
+              <div class="mockup-score-card">
+                <div class="val text-primary">89%</div>
+                <div class="label">Integrity Score</div>
+              </div>
+            </div>
+
+            <!-- Live Feed Frame & Activity Log -->
+            <div class="row">
+              <div class="col-md-7 mb-3 mb-md-0">
+                <div class="mockup-feed-container">
+                  <img src="{{ url_for('static', filename='myproctoraiindex.gif') }}" alt="Live Monitoring Stream" class="mockup-feed-img">
+                  <div class="position-absolute bottom-0 left-0 p-2 w-100 d-flex justify-content-between" style="background:rgba(0,0,0,0.6); color:#fff; font-size:0.75rem;">
+                    <span><i class="fas fa-user-check text-success mr-1"></i> Face Verified</span>
+                    <span class="badge badge-danger">ON AIR</span>
+                  </div>
+                </div>
               </div>
 
-      </div>
-      </section>      
-<br>
+              <div class="col-md-5">
+                <div class="bg-light p-2 rounded border h-100" style="font-size:0.78rem;">
+                  <div class="font-weight-bold text-dark mb-2 border-bottom pb-1">Activity Log</div>
+                  <div class="text-success mb-2"><i class="fas fa-check-circle mr-1"></i> Face Verified <div class="text-muted small">Just now</div></div>
+                  <div class="text-muted mb-2"><i class="fas fa-eye mr-1"></i> Eye Gaze Center <div class="text-muted small">2 mins ago</div></div>
+                  <div class="text-muted"><i class="fas fa-shield-alt mr-1"></i> Browser Lock Active <div class="text-muted small">System OK</div></div>
+                </div>
+              </div>
+            </div>
 
-<section class="py-5">
-    <div class="container">
-    <div class="card shadow bg-white text-secondary">
-    <div class="card-body">
-<div class="pt-5 pb-4 mb-3 border-top">
-    <div class="container pb-2">
-      <h2 class="text-center  mb-5 no-xs-margin-bottom">
-        Verify The Authenticity of Your Candidates With Our 3-point Authentication System
-      </h2>
-      <div class="row  py-4">
-        <div class="col-md-5 mt-5">
-          <div class="row mb-2">
-            <div class="col-xs-3">
-              <img loading="lazy" src="/static/examcheck.png" alt="Candidate-enter-registration-details" class="center-block img img-responsive" style="height:45px;">
-              
-            </div>
-            <div class="col-xs-9 pl-0">
-              <h4 class="mt-1 pl-0 text-bold">
-                Candidate enter registration details (Customizable fields)
-              </h4>
-            </div>
-          </div>
-          <div class="row mb-2">
-            <div class="col-xs-3">
-              <img loading="lazy" src="/static/candidateclickspic.png" alt="Candidate-clicks-his-picture" class="center-block img img-responsive" style="height:45px;">
-            </div>
-            <div class="col-xs-9 pl-0">
-              <h4 class="mt-2 pl-0 text-bold">
-                Candidate clicks his picture
-              </h4>
-            </div>
-          </div>
-          <div class="row mb-2">
-            <div class="col-xs-3">
-              <img loading="lazy" src="/static/idverify.png" alt="Candidate-verifies-his-ID-proof" class="center-block img img-responsive" style="height:45px;">
-  
-            </div>
-            <div class="col-xs-9 pl-0">
-              <h4 class="mt-2 pl-0 text-bold">
-                If Candidate face is verified then only it allow to give exam.
-              </h4>
+            <!-- Floating Shield Icon -->
+            <div class="mockup-floating-shield">
+              <i class="fas fa-shield-alt"></i>
             </div>
           </div>
         </div>
-        <div class="col-md-7 col-sm-7">
-          
-          <picture> 
-            <img loading="lazy" src="/static/mettlverify.jpg" alt="Candidate-Authentication" class="img img-responsive"> 
-          </picture>
-        </div>
       </div>
     </div>
-  </div>
-    </div>
-    </div>
-    </div>
-</section>
-
-<section class="py-5">
-  <div class="container">
-  <div class="card shadow bg-white text-secondary">
-  <div class="card-body">
-  
-  <div class="container">
-  <div class="row">
-  <div class="col-10 offset-1">
-  <h1 class="text-center">MyProctor.ai is Best Suited For</h1><br>
-  <div class="row  justify-content-center feature-container">
-  
-  <div class="col-12 col-md-4">
-  <div class="container">
-  <div class="row ">
-  <div class="col-12">
-  <p><img class="img-fluid services-feature-img" src="/static/001-old-school.png" alt="Dedicated Account Team"></p>
-  </div>
-  <div class="col-12">
-  <h6 class="text-center">Universities</h6>
-  <p class="text-center">MyProctor.ai offers a superior proctored online exam experience for candidates and at the same time promote excellence and integrity for education programs.</p>
-  </div>
-  </div>
-  </div>
-  </div>
-  
-  <div class="col-12 col-md-4">
-  <div class="container">
-  <div class="row ">
-  <div class="col-12">
-  <p><img class="img-fluid services-feature-img" src="/static/i14.png" alt="Dedicated Account Team"></p>
-  </div>
-  <div class="col-12">
-  <h6 class="text-center">Assessment Providers</h6>
-  <p class="text-center">Assessments are available anywhere anytime for candidates. Proview's cognitive proctoring technology protects the test and disables false positives.</p>
-  </div>
-  </div>
-  </div>
-  </div>
-  
-  <div class="col-12 col-md-4">
-  <div class="container">
-  <div class="row ">
-  <div class="col-12">
-  <p><img class="img-fluid services-feature-img" src="/static/i15.png" alt="Dedicated Account Team"></p>
-  </div>
-  <div class="col-12">
-  <h6 class="text-center">E-Learning Programs</h6>
-  <p class="text-center">Reduce your expenditure on test centers and inefficient manual proctoring. Integrate MyProctor.ai to your existing test engine or use MyProctor.ai secure test engine to deliver tests.</p>
-  </div>
-  </div>
-  </div>
-  </div>
-  </div>
-  </div>
-  </div>
-  </div>
-
-  </div>
-  </div>
   </div>
 </section>
 
-<section class="py-5">
-<div class="container">
-<div class="card shadow bg-white text-secondary">
-<div class="card-body">
-
-<div class="container">
-<div class="row">
-<div class="col-10 offset-1">
-<h1 class="text-center">From Global to Granular, See the Key Performance Indicators that Matter</h1>
-<h3 class="text-center">Committed to Your Success</h3>
-<div class="row  justify-content-center feature-container">
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i1.png" alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Protect Your Credibility</h6>
-<p class="text-center">Technology that Crushes Brick and Mortar Test Centers.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i2.png" alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Save Money as You Grow</h6>
-<p class="text-center">Remove the burden of costly physical infrastructure without sacrificing security.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i3.png" alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Test Any Time, Anywhere</h6>
-<p class="text-center">We stay up late so your test-takers have the freedom to test when it’s convenient from anywhere in the world.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i4.png" alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Performance Insights</h6>
-<p class="text-center">Track metrics and trends across all your exams and compare to industry benchmarks.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i5.png" alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Exam Facilitator Dashboard</h6>
-<p class="text-center">Review and inspect metrics for each individual exam.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src=/static/i6.png alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Incident Reports</h6>
-<p class="text-center">Investigate a specific test-taker’s session and determine if action is needed.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i7.png" alt="Dedicated Account Team"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Dedicated Account Team</h6>
-<p class="text-center">Every client and test admin gets a dedicated ProctorU team who answer questions and help with exam setup.</p>
-</div>
-</div>
-</div>
-</div>
-
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i8.png" alt="Free Technical Support"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Free Technical Support</h6>
-<p class="text-center">We offer free exam-related technical support 24/7/365 via phone, email, live chat, and remote support sessions. Exam facilitators also have their own hotline for quick help.</p>
-</div>
-</div>
-</div>
-</div>
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i9.png" alt="Unmatched Scalability"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Unmatched Scalability</h6>
-<p class="text-center">Securing millions of exams online each year, with the largest certified proctor workforce in the world.</p>
-</div>
-</div>
-</div>
-</div>
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i10.png" alt="User Satisfaction"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">User Satisfaction</h6>
-<p class="text-center">Industry leading test-taker satisfaction.</p>
-</div>
-</div>
-</div>
-</div>
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i11.png" alt="Unparalleled Uptime"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Unparalleled Uptime</h6>
-<p class="text-center">24/7 access to scheduling, proctoring and reporting.</p>
-</div>
-</div>
-</div>
-</div>
-<div class="col-12 col-md-4">
-<div class="container">
-<div class="row ">
-<div class="col-12">
-<p><img class="img-fluid services-feature-img" src="/static/i12.png" alt="Technology"></p>
-</div>
-<div class="col-12">
-<h6 class="text-center">Advanced Technology</h6>
-<p class="text-center">We're dedicated to investing in the latest technologies as market needs evolve. </p>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-</div>
-        </div>
+<!-- ── FEATURES SECTION ────────────────────────────────────────────────────── -->
+<section id="features" class="features-section">
+  <div class="container">
+    <div class="text-center max-w-700 mx-auto mb-5">
+      <h2 class="font-weight-800 text-dark display-5 mb-2">Why Choose MyProctor.ai?</h2>
+      <p class="text-muted lead">Built for educators. Trusted by institutions. Loved by students.</p>
     </div>
-</div>
+
+    <div class="row">
+      <!-- Card 1 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="feature-card">
+          <div class="feature-icon-box purple">
+            <i class="fas fa-crop-alt"></i>
+          </div>
+          <h5 class="font-weight-700 mb-2">Advanced AI</h5>
+          <p class="text-muted small mb-0">
+            State-of-the-art AI models detect suspicious behavior with high accuracy.
+          </p>
+        </div>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="feature-card">
+          <div class="feature-icon-box blue">
+            <i class="fas fa-chart-line"></i>
+          </div>
+          <h5 class="font-weight-700 mb-2">Real-time Monitoring</h5>
+          <p class="text-muted small mb-0">
+            Live proctoring with instant alerts ensures exam integrity from start to finish.
+          </p>
+        </div>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="feature-card">
+          <div class="feature-icon-box green">
+            <i class="fas fa-user-shield"></i>
+          </div>
+          <h5 class="font-weight-700 mb-2">Privacy First</h5>
+          <p class="text-muted small mb-0">
+            We prioritize data privacy and security with secure processing and protection.
+          </p>
+        </div>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="feature-card">
+          <div class="feature-icon-box orange">
+            <i class="fas fa-plug"></i>
+          </div>
+          <h5 class="font-weight-700 mb-2">Easy Integration</h5>
+          <p class="text-muted small mb-0">
+            Seamlessly integrate with your existing learning and examination platforms.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
 
-                <br>
-      
-                <section class="py-5">
-                  <div class="container">
-                  <div class="card shadow bg-white text-secondary">
-                  <div class="card-body">
+<!-- ── HOW IT WORKS SECTION ────────────────────────────────────────────────── -->
+<section id="how-it-works" class="how-section">
+  <div class="container">
+    <div class="text-center max-w-700 mx-auto mb-5">
+      <h2 class="font-weight-800 text-dark display-5 mb-2">How It Works</h2>
+      <p class="text-muted lead">Simple, secure 4-step examination workflow.</p>
+    </div>
 
-                    <div class="container">
-                      <div class="row">
-                      <div class="col-10 offset-1">
-                      <h1 class="text-center">Our Tech Partners</h1><br>
-                      <div class="row  justify-content-center feature-container">
-                      
-                      <div class="col-12 col-md-4">
-                      <div class="container">
-                      <div class="row ">
-                      <div class="col-12">
-                      <p><img class="img-fluid services-feature-img" src="/static/sphereenginelogo.png" alt="Dedicated Account Team"></p>
-                      </div>
-                      <div class="col-12">
-                      <h6 class="text-center">Sphere Engine</h6>
-                      </div>
-                      </div>
-                      </div>
-                      </div>
+    <div class="row">
+      <!-- Step 1 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="card-modern step-card h-100">
+          <div class="step-number">01</div>
+          <h5 class="font-weight-700 mb-2">Register</h5>
+          <p class="text-muted small mb-0">Create your secure student or educator account.</p>
+        </div>
+      </div>
 
-                      <div class="col-12 col-md-4">
-                        <div class="container">
-                        <div class="row ">
-                        <div class="col-12">
-                        <p><img class="img-fluid services-feature-img" src="/static/256px-Vonage_Logo.png" alt="Dedicated Account Team"></p>
-                        </div>
-                        <div class="col-12">
-                        <h6 class="text-center">Vonage Communication Services</h6>
-                        </div>
-                        </div>
-                        </div>
-                        </div>
+      <!-- Step 2 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="card-modern step-card h-100">
+          <div class="step-number">02</div>
+          <h5 class="font-weight-700 mb-2">Verify</h5>
+          <p class="text-muted small mb-0">Complete instant face &amp; liveness verification.</p>
+        </div>
+      </div>
 
-                        <div class="col-12 col-md-4">
-                          <div class="container">
-                          <div class="row ">
-                          <div class="col-12">
-                          <p><img class="img-fluid services-feature-img" src="/static/Stripe wordmark - blurple_lg.png" alt="Dedicated Account Team"></p>
-                          </div>
-                          <div class="col-12">
-                          <h6 class="text-center">Stripe Payment Services</h6>
-                          </div>
-                          </div>
-                          </div>
-                          </div>
+      <!-- Step 3 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="card-modern step-card h-100">
+          <div class="step-number">03</div>
+          <h5 class="font-weight-700 mb-2">Start Exam</h5>
+          <p class="text-muted small mb-0">Enter the AI-monitored examination environment.</p>
+        </div>
+      </div>
 
-                      </div>
-                  </div>
-                  </div>
-                    </div>
-                  </div>
-                      </div>
-                  </div>
-              </section>
+      <!-- Step 4 -->
+      <div class="col-md-6 col-lg-3 mb-4">
+        <div class="card-modern step-card h-100">
+          <div class="step-number">04</div>
+          <h5 class="font-weight-700 mb-2">Get Results</h5>
+          <p class="text-muted small mb-0">Receive comprehensive proctoring &amp; exam analytics.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
+<!-- ── SECURITY SECTION ────────────────────────────────────────────────────── -->
+<section class="security-dark-section">
+  <div class="container">
+    <div class="row align-items-center">
+      <div class="col-lg-6 mb-4 mb-lg-0">
+        <h2 class="font-weight-800 display-5 mb-4">Built for Secure Online Assessments</h2>
+        <p class="text-light opacity-8 lead mb-4">
+          Our advanced multi-layered AI proctoring system guarantees academic integrity across remote environments.
+        </p>
 
+        <div class="security-feature-item">
+          <div class="security-icon-circle">
+            <i class="fas fa-id-badge"></i>
+          </div>
+          <div>
+            <h6 class="font-weight-700 mb-1">Face &amp; Liveness Verification</h6>
+            <p class="small text-light opacity-7 mb-0">Prevents candidate impersonation via MediaPipe facial landmark analysis.</p>
+          </div>
+        </div>
+
+        <div class="security-feature-item">
+          <div class="security-icon-circle">
+            <i class="fas fa-eye"></i>
+          </div>
+          <div>
+            <h6 class="font-weight-700 mb-1">Gaze &amp; Object Detection</h6>
+            <p class="small text-light opacity-7 mb-0">Real-time eye tracking and mobile phone / multi-person detection.</p>
+          </div>
+        </div>
+
+        <div class="security-feature-item">
+          <div class="security-icon-circle">
+            <i class="fas fa-lock"></i>
+          </div>
+          <div>
+            <h6 class="font-weight-700 mb-1">Content Protection &amp; Anti-Cheating</h6>
+            <p class="small text-light opacity-7 mb-0">Prevents tab switching, print screen, and unauthorized software usage.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-5 offset-lg-1 text-center">
+        <div class="p-4 rounded-xl border border-secondary" style="background:rgba(255,255,255,0.05); backdrop-filter:blur(10px);">
+          <div class="shield-pulse-wrapper">
+            <div class="shield-pulse-ring"></div>
+            <div class="shield-center-icon">
+              <i class="fas fa-shield-alt"></i>
+            </div>
+          </div>
+          <h4 class="font-weight-700 text-white mb-2">99.8% Detection Accuracy</h4>
+          <p class="text-light opacity-7 small mb-0">Trusted AI engine processing millions of examination frames in real-time.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FINAL CTA BANNER ────────────────────────────────────────────────────── -->
+<section class="cta-banner-section">
+  <div class="container">
+    <div class="cta-banner-card">
+      <div>
+        <h2 class="font-weight-800">Ready to secure your exams?</h2>
+        <p class="text-light opacity-8 mb-0">Join institutions that trust MyProctor.ai for secure online assessments.</p>
+      </div>
+      <div>
+        <a href="/register" class="btn-modern-primary btn-lg">
+          Get Started Now <i class="fas fa-arrow-right ml-2"></i>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
 {% endblock %}
