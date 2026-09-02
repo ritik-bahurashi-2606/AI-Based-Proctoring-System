@@ -1,112 +1,130 @@
 {% extends 'student_dashboard.html' %}
 {% block body %}
 {% from "includes/_formhelpers.html" import render_field %}
-<div class="row align-items-center d-flex  justify-content-center">
-  <div class="col-12 mb-4">
-      <div class="card border-light shadow-sm components-section align-items-center d-flex  justify-content-center">
-          <div class="card-body align-items-center d-flex justify-content-center">     
-              <div class="row mb-4">
-                    <div class="col-lg-12 col-sm-16">
-                      <h3 class="h3 text-center">EXAM LOGIN</h3>  
-                    </div>
-                    <div class="card-body">
-							        <form action="" method="POST" class="mt-4">
-                                    <div class="form-group">
-                                      {{render_field(form.test_id, class="form-control")}}
-                                    </div>
-                                    <div class="form-group">
-                                      {{render_field(form.password, class="form-control")}}
-                                    </div>
+<div class="row align-items-center d-flex justify-content-center">
+  <div class="col-12 col-md-8 col-lg-6 mb-4">
+      <div class="card border-light shadow-sm components-section">
+          <div class="card-body p-4">     
+              <div class="text-center mb-4">
+                  <h3 class="h3 font-weight-bold text-primary">EXAM LOGIN</h3>  
+                  <p class="text-muted small">Enter your Exam ID, Password, and capture your face photo to verify identity.</p>
+              </div>
+              <form action="" method="POST" id="exam-login-form">
+                  <div class="form-group">
+                    {{render_field(form.test_id, class="form-control", placeholder="Enter Exam ID")}}
+                  </div>
+                  <div class="form-group">
+                    {{render_field(form.password, class="form-control", placeholder="Enter Password")}}
+                  </div>
 
-                                    <div class="form-group">
-                                      <video id="stream" width="370" height="320">
-                                          <canvas id="capture" width="370" height="320">
-                                          </canvas>
-                                        </video>
-                                        <br>
-                                        <button id="btn-capture" type="button" class="btn btn-primary justify-content-center">Capture Image</button>
-                                        <br><br>
-                                          <div id="snapshot"></div>
-                                          {{render_field(form.img_hidden_form, id="img_hidden")}}
-                                      </div>
-
-                                    <input type="submit" class="btn btn-block btn-primary" value="Login For Exam"/>
-                                  </div>
-                                  </form>
-                            </div>
-                        </div>
+                  <div class="form-group text-center">
+                    <label class="font-weight-bold d-block text-left mb-2">Face Identity Verification:</label>
+                    <div style="position: relative; display: inline-block; max-width: 100%;">
+                      <video id="stream" width="370" height="280" style="border-radius: 8px; background: #000; object-fit: cover;" autoplay playsinline muted>
+                      </video>
+                      <canvas id="capture" width="370" height="280" style="display:none;"></canvas>
                     </div>
-                </div>
-            </div>
+                    
+                    <div class="mt-3">
+                      <button id="btn-capture" type="button" class="btn btn-outline-primary btn-sm px-4">
+                        📷 Capture Photo
+                      </button>
+                    </div>
+
+                    <div id="capture-status" class="mt-2" style="min-height: 24px;">
+                      <span class="badge badge-warning p-2">Waiting for camera...</span>
+                    </div>
+
+                    <div id="snapshot" class="mt-2 text-center"></div>
+                    {{render_field(form.img_hidden_form, id="img_hidden")}}
+                  </div>
+
+                  <input type="submit" id="btn-submit" class="btn btn-block btn-primary py-2 font-weight-bold" value="Proceed to Exam Readiness Check"/>
+              </form>
+          </div>
+      </div>
+  </div>
+</div>
         
 <script>
-var btnCapture = document.getElementById( "btn-capture" );
-
-var stream = document.getElementById( "stream" );
-var capture = document.getElementById( "capture" );
-var snapshot = document.getElementById( "snapshot" );
+var btnCapture = document.getElementById("btn-capture");
+var stream = document.getElementById("stream");
+var capture = document.getElementById("capture");
+var snapshot = document.getElementById("snapshot");
+var imgHidden = document.getElementById("img_hidden");
+var captureStatus = document.getElementById("capture-status");
+var form = document.getElementById("exam-login-form");
 
 var cameraStream = null;
+var isCaptured = false;
 
-btnCapture.addEventListener( "click", captureSnapshot );
+btnCapture.addEventListener("click", function() {
+    captureSnapshot(true);
+});
 
 function startStreaming() {
-
-  var mediaSupport = 'mediaDevices' in navigator;
-
-  if( mediaSupport && null == cameraStream ) {
-
-    navigator.mediaDevices.getUserMedia( { video: true } )
-    .then( function( mediaStream ) {
-
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+    .then(function(mediaStream) {
       cameraStream = mediaStream;
-
       stream.srcObject = mediaStream;
-
       stream.play();
+
+      captureStatus.innerHTML = '<span class="badge badge-info p-2">Camera Active - Align your face...</span>';
+
+      // Auto capture photo 1.5 seconds after stream starts if user hasn't captured manually
+      setTimeout(function() {
+        if (!isCaptured) {
+          captureSnapshot(false);
+        }
+      }, 1500);
     })
-    .catch( function( err ) {
-
-      console.log( "Unable to access camera: " + err );
+    .catch(function(err) {
+      console.warn("Camera access error:", err);
+      captureStatus.innerHTML = '<span class="badge badge-danger p-2">⚠️ Unable to access camera. Please allow camera permissions.</span>';
     });
-  }
-  else {
-
-    alert( 'Your browser does not support media devices.' );
-
-    return;
+  } else {
+    captureStatus.innerHTML = '<span class="badge badge-danger p-2">⚠️ Camera API not supported in this browser.</span>';
   }
 }
 
-function captureSnapshot() {
+function captureSnapshot(manualClick) {
+  if (cameraStream && stream.readyState === 4) {
+    var ctx = capture.getContext('2d');
+    ctx.drawImage(stream, 0, 0, capture.width, capture.height);
 
-  if( null != cameraStream ) {
+    var dataUrl = capture.toDataURL("image/png");
+    var base64Data = dataUrl.replace(/^data:image\/(png|jpg);base64,/, "");
 
-    var ctx = capture.getContext( '2d' );
-    var img = new Image();
+    imgHidden.value = base64Data;
+    isCaptured = true;
 
-    ctx.drawImage( stream, 0, 0, capture.width, capture.height );
-  
-    img.src		= capture.toDataURL( "image/png" );
-    img.width	= 370;
-    img.height	= 320;
-    //console.log(capture.toDataURL( "image/png" ));
     snapshot.innerHTML = '';
+    var previewImg = document.createElement("img");
+    previewImg.src = dataUrl;
+    previewImg.style.cssText = "width: 140px; height: 105px; border-radius: 6px; border: 2px solid #28a745; margin-top: 6px;";
+    snapshot.appendChild(previewImg);
 
-    snapshot.appendChild( img );
-    var d1 = capture.toDataURL("image/png");
-    var res = d1.replace("data:image/png;base64,", "");
-    // console.log(res);
-    snapshot.innerHTML = '';
-    snapshot.appendChild( img );
-    $("#img_hidden").val(res)    
-
+    captureStatus.innerHTML = '<span class="badge badge-success p-2">✅ Photo Captured Successfully!</span>';
+  } else if (manualClick) {
+    captureStatus.innerHTML = '<span class="badge badge-warning p-2">Camera loading... please wait a moment.</span>';
   }
 }
-window.onload = function() {
+
+form.addEventListener("submit", function(e) {
+    if (!imgHidden.value || imgHidden.value.trim() === "") {
+        e.preventDefault();
+        captureSnapshot(true);
+        if (!imgHidden.value) {
+            alert("Please ensure your camera is enabled and capture your photo before logging in.");
+        } else {
+            form.submit();
+        }
+    }
+});
+
+document.addEventListener("DOMContentLoaded", function() {
    startStreaming();
-   captureSnapshot();
-}
-
-        </script>
+});
+</script>
 {% endblock %}

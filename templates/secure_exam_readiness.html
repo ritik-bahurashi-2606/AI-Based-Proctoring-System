@@ -1,0 +1,114 @@
+{% extends 'exam_layout.html' %}
+{% block body %}
+<!-- Pre-Exam System Environment Modal -->
+<div class="modal fade show" id="envCheckModal" tabindex="-1" role="dialog" style="display: block; background: rgba(0,0,0,0.75); z-index: 1050;" data-backdrop="static" data-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+    <div class="modal-content border-0 shadow-lg style-modal">
+      <div class="modal-header bg-primary text-white py-3">
+        <h5 class="modal-title font-weight-bold d-flex align-items-center">
+          <span style="font-size: 1.3rem; margin-right: 10px;">🛡️</span> Safe Examination Environment & System Guidance
+        </h5>
+      </div>
+      <div class="modal-body p-4">
+        <div class="alert alert-warning border-left-warning mb-4" role="alert">
+          <strong class="h6 font-weight-bold d-block mb-1">⚠️ MANDATORY EXAMINATION REQUIREMENTS</strong>
+          Please read and complete all system requirement steps below before launching your exam session.
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <div class="p-3 border rounded h-100 bg-light">
+              <h6 class="font-weight-bold text-danger d-flex align-items-center">
+                <span class="mr-2">🌐</span> Close All Other Browser Tabs
+              </h6>
+              <p class="small text-muted mb-0">
+                You must close all secondary tabs in Chrome/browser. Tab switching or opening new windows during the exam will trigger immediate malpractice logging.
+              </p>
+            </div>
+          </div>
+
+          <div class="col-md-6 mb-3">
+            <div class="p-3 border rounded h-100 bg-light">
+              <h6 class="font-weight-bold text-danger d-flex align-items-center">
+                <span class="mr-2">💻</span> Close OS Background Applications
+              </h6>
+              <p class="small text-muted mb-0">
+                Exit screen sharing, remote desktop software, screen recorders, and chat applications (Zoom, Teams, Discord, AnyDesk, OBS, Telegram) before proceeding.
+              </p>
+            </div>
+          </div>
+
+          <div class="col-md-6 mb-3">
+            <div class="p-3 border rounded h-100 bg-light">
+              <h6 class="font-weight-bold text-info d-flex align-items-center">
+                <span class="mr-2">🎥</span> Camera & Microphone Permissions
+              </h6>
+              <p class="small text-muted mb-0">
+                Allow browser permissions for your camera and microphone. Ensure your face is centered and clearly illuminated.
+              </p>
+            </div>
+          </div>
+
+          <div class="col-md-6 mb-3">
+            <div class="p-3 border rounded h-100 bg-light">
+              <h6 class="font-weight-bold text-success d-flex align-items-center">
+                <span class="mr-2">🖥️</span> Fullscreen & Environment Lock
+              </h6>
+              <p class="small text-muted mb-0">
+                The examination will run in Fullscreen Mode. Exiting fullscreen or pressing restricted hotkeys (Ctrl+C, Ctrl+V, Alt+Tab) is monitored.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer bg-light py-3 justify-content-between">
+        <span class="text-muted small">By continuing, you agree to adhere to the online examination proctoring policy.</span>
+        <button type="button" id="btn-acknowledge-env" class="btn btn-primary px-4 font-weight-bold">
+          I Have Closed Other Apps & Tabs → Continue
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main class="secure-readiness-page py-4" data-exam-id="{{ testid }}">
+  <section class="container py-3">
+    <div class="secure-readiness-shell card border-0 shadow p-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <span class="badge badge-primary px-3 py-2 text-uppercase">Secure Exam Mode</span>
+          <h2 class="h3 font-weight-bold mt-2 mb-1">System Compatibility Diagnostics</h2>
+          <p class="text-muted small mb-0">Testing hardware, browser capabilities, and network connection before opening exam session.</p>
+        </div>
+      </div>
+
+      <div class="secure-score-wrap my-3 p-3 bg-light rounded border">
+        <div class="d-flex justify-content-between font-weight-bold mb-1">
+          <span>System Readiness Status</span>
+          <span id="readiness-score" class="text-primary">Running Diagnostics...</span>
+        </div>
+        <div class="progress" style="height: 12px;">
+          <div id="readiness-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 10%;"></div>
+        </div>
+      </div>
+
+      <div id="readiness-items" class="secure-check-list my-3" aria-live="polite"></div>
+      <div id="readiness-message" class="alert d-none mt-3" role="alert"></div>
+
+      <div class="secure-actions d-flex justify-content-end mt-4 pt-3 border-top">
+        <button type="button" id="secure-retry" class="btn btn-outline-secondary mr-2 px-4">🔄 Re-run Diagnostics</button>
+        <button type="button" id="secure-start" class="btn btn-success px-5 font-weight-bold py-2" disabled>🚀 Start Secure Exam</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  window.SECURE_READINESS_CONFIG = { examId: {{ testid|tojson }}, policy: {{ policy|tojson }} };
+  document.getElementById('btn-acknowledge-env').addEventListener('click', function() {
+    var modal = document.getElementById('envCheckModal');
+    if (modal) modal.style.display = 'none';
+  });
+</script>
+<script src="{{ url_for('static', filename='secure_exam.js') }}"></script>
+{% endblock %}

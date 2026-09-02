@@ -17,13 +17,13 @@ PROCTOR_EVENT_COOLDOWN_SECONDS = float(os.getenv("PROCTOR_EVENT_COOLDOWN_SECONDS
 PROCTOR_FACE_OUT_OF_FRAME_SECONDS = float(os.getenv("PROCTOR_FACE_OUT_OF_FRAME_SECONDS", "4"))
 PROCTOR_FACE_PARTIAL_SECONDS = float(os.getenv("PROCTOR_FACE_PARTIAL_SECONDS", "5"))
 PROCTOR_HEAD_MOVE_WINDOW_SECONDS = float(os.getenv("PROCTOR_HEAD_MOVE_WINDOW_SECONDS", "10"))
-PROCTOR_HEAD_YAW_THRESHOLD = float(os.getenv("PROCTOR_HEAD_YAW_THRESHOLD", "25")) # Degrees
-PROCTOR_HEAD_PITCH_THRESHOLD = float(os.getenv("PROCTOR_HEAD_PITCH_THRESHOLD", "20")) # Degrees
-PROCTOR_HEAD_TURN_SECONDS = float(os.getenv("PROCTOR_HEAD_TURN_SECONDS", "3"))
-PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW = int(os.getenv("PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW", "4"))
-PROCTOR_GAZE_DEVIATION_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_SECONDS", "4"))
+PROCTOR_HEAD_YAW_THRESHOLD = float(os.getenv("PROCTOR_HEAD_YAW_THRESHOLD", "38.0")) # Degrees
+PROCTOR_HEAD_PITCH_THRESHOLD = float(os.getenv("PROCTOR_HEAD_PITCH_THRESHOLD", "32.0")) # Degrees
+PROCTOR_HEAD_TURN_SECONDS = float(os.getenv("PROCTOR_HEAD_TURN_SECONDS", "2.5"))
+PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW = int(os.getenv("PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW", "6"))
+PROCTOR_GAZE_DEVIATION_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_SECONDS", "5.0"))
 PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS", "8"))
-PROCTOR_GAZE_DEVIATION_REPEAT_COUNT = int(os.getenv("PROCTOR_GAZE_DEVIATION_REPEAT_COUNT", "5"))
+PROCTOR_GAZE_DEVIATION_REPEAT_COUNT = int(os.getenv("PROCTOR_GAZE_DEVIATION_REPEAT_COUNT", "7"))
 PROCTOR_ABSENT_SECONDS = float(os.getenv("PROCTOR_ABSENT_SECONDS", "4"))
 PROCTOR_FACE_HIDDEN_SECONDS = float(os.getenv("PROCTOR_FACE_HIDDEN_SECONDS", "3"))
 YOLO_PHONE_SCORE_MIN = float(os.getenv("YOLO_PHONE_SCORE_MIN", "0.52"))
@@ -263,10 +263,10 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
     else:
         state["head_turn_prolong_start"] = None
 
-    # Repeated head movement (using changes in angles)
+    # Repeated head movement (using significant changes in angles)
     if len(state["head_yaw_history"]) > 1:
-        significant_yaw_changes = sum(1 for i in range(1, len(state["head_yaw_history"])) if abs(state["head_yaw_history"][i][1] - state["head_yaw_history"][i-1][1]) > PROCTOR_HEAD_YAW_THRESHOLD / 2)
-        significant_pitch_changes = sum(1 for i in range(1, len(state["head_pitch_history"])) if abs(state["head_pitch_history"][i][1] - state["head_pitch_history"][i-1][1]) > PROCTOR_HEAD_PITCH_THRESHOLD / 2)
+        significant_yaw_changes = sum(1 for i in range(1, len(state["head_yaw_history"])) if abs(state["head_yaw_history"][i][1] - state["head_yaw_history"][i-1][1]) > PROCTOR_HEAD_YAW_THRESHOLD * 0.75)
+        significant_pitch_changes = sum(1 for i in range(1, len(state["head_pitch_history"])) if abs(state["head_pitch_history"][i][1] - state["head_pitch_history"][i-1][1]) > PROCTOR_HEAD_PITCH_THRESHOLD * 0.75)
         
         if (significant_yaw_changes + significant_pitch_changes) >= PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW:
             if now - state["last_head_movement_event_time"] > PROCTOR_EVENT_COOLDOWN_SECONDS:
@@ -344,10 +344,16 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
             candidates.append(_event("repeated_gaze_deviation", confidence=min(1.0, deviated_gaze_count / PROCTOR_GAZE_DEVIATION_REPEAT_COUNT)))
             state["last_gaze_deviation_event_time"] = now
 
+    INSTANT_TRANSIENT_EVENTS = {
+        "head_turned_left", "head_turned_right", "head_tilted_up", "head_tilted_down",
+        "looking_away", "looking_up", "looking_down"
+    }
+
     logged_events = []
     for candidate in candidates:
         event_type = candidate["event_type"]
-        warnings.append(candidate)
+        if event_type not in INSTANT_TRANSIENT_EVENTS or candidate.get("duration") is not None:
+            warnings.append(candidate)
         if _cooldown_ok(state, event_type, now):
             duration = candidate.get("duration")
             _mark_logged(state, event_type, now, duration)

@@ -121,6 +121,7 @@ function finish_test() {
         url: examUrl,
         data: {flag: 'completed'},
         success: function(data) {
+            if (window.SecureExam) window.SecureExam.end();
             window.location.replace('/student_index');
         },
         error: function(error) {
@@ -381,4 +382,3 @@ function funSubmitExam()
   e.stopImmediatePropagation();
   }
   });
-  

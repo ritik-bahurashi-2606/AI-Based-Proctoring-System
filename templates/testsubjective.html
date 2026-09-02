@@ -82,6 +82,10 @@
    </div>
  </section>
  </main>      
+  <script>
+    window.SECURE_EXAM_CONFIG = { examId: {{ test_id|tojson }}, sessionId: {{ secure_exam_session_id|tojson }}, policy: {{ secure_exam_policy|tojson }} };
+  </script>
+  <script type="text/javascript" src="{{ url_for('static', filename='secure_exam.js') }}"></script>
   <script type="text/javascript" src="{{ url_for('static', filename='appsubjective.js') }}"></script>
   <script>
     var vid = "{{proctortypes}}";

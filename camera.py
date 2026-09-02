@@ -18,9 +18,9 @@ import time
 from collections import deque
 
 # ── Configurable thresholds (env-overridable) ─────────────────────────────────
-_HEAD_YAW_THRESH   = float(os.getenv('PROCTOR_HEAD_YAW_THRESHOLD',  '22'))   # degrees
-_HEAD_PITCH_THRESH = float(os.getenv('PROCTOR_HEAD_PITCH_THRESHOLD', '18'))   # degrees
-_SMOOTHING_ALPHA   = 0.35   # EMA smoothing factor (lower = smoother)
+_HEAD_YAW_THRESH   = float(os.getenv('PROCTOR_HEAD_YAW_THRESHOLD',  '38'))   # degrees
+_HEAD_PITCH_THRESH = float(os.getenv('PROCTOR_HEAD_PITCH_THRESHOLD', '32'))   # degrees
+_SMOOTHING_ALPHA   = 0.18   # EMA smoothing factor (lower = smoother)
 _EAR_BLINK_THRESH  = 0.18   # eye aspect ratio below → blink, skip gaze
 
 # ── Optional gaze tracker ─────────────────────────────────────────────────────

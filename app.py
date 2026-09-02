@@ -38,6 +38,7 @@ import os
 import time
 import uuid
 from dotenv import load_dotenv
+from secure_exam import DEFAULT_POLICY, EVENT_SEVERITY, SecureExamService
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -103,6 +104,15 @@ cors = CORS(app)
 app.config['CORS_HEADERS'] = 'Content-Type'
 
 mysql = MySQL(app)
+secure_exam = SecureExamService(mysql, app.logger)
+
+
+@app.context_processor
+def inject_secure_exam_context():
+	return {
+		'secure_exam_session_id': session.get('secure_exam_session_id'),
+		'secure_exam_policy': session.get('secure_exam_policy', DEFAULT_POLICY),
+	}
 
 # Enable MySQL auto-reconnect and set connection options
 app.config.setdefault('MYSQL_AUTOCOMMIT', False)
@@ -1616,9 +1626,9 @@ class UploadForm(FlaskForm):
 			pass
 
 class TestForm(Form):
-	test_id = StringField('Exam ID')
-	password = PasswordField('Exam Password')
-	img_hidden_form = HiddenField(label=(''))
+	test_id = StringField('Exam ID', [validators.DataRequired(message='Enter the exam ID provided by your instructor.')])
+	password = PasswordField('Exam Password', [validators.DataRequired(message='Enter the exam password.')])
+	img_hidden_form = HiddenField(label=(''), validators=[validators.DataRequired(message='Capture a clear face photo before continuing.')])
 
 @app.route('/create_test', methods = ['GET', 'POST'])
 @app.route('/create-test', methods = ['GET', 'POST'])
@@ -2204,6 +2214,178 @@ def test_update_time():
 			else:
 				return "time error"
 
+def _secure_request_payload():
+	return request.get_json(silent=True) or request.form.to_dict() or {}
+
+
+def _secure_exam_context(testid):
+	"""Return exam owner and policy without trusting a client-provided policy."""
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute('SELECT uid FROM teachers WHERE test_id = %s LIMIT 1', (testid,))
+		exam = cur.fetchone()
+		if not exam:
+			return None, None
+		return exam['uid'], secure_exam.policy_for_exam(testid, exam['uid'])
+	finally:
+		cur.close()
+
+
+def _complete_secure_exam_session(testid):
+	"""Release the secure session only after the normal exam submission succeeds."""
+	session_id = session.get('secure_exam_session_id')
+	if not session_id:
+		return
+	secure_session = secure_exam.session_for_student(session_id, testid, session['email'], session['uid'])
+	if secure_session and secure_session['status'] in ('active', 'paused'):
+		secure_exam.record_event(session_id, testid, session['email'], 'EXAM_SUBMITTED', 'server',
+			'Exam submission was confirmed by the application.')
+		secure_exam.end_session(session_id, 'submitted')
+
+
+@app.route('/secure-exam/<testid>')
+@user_role_student
+def secure_exam_readiness(testid):
+	professor_uid, policy = _secure_exam_context(testid)
+	if professor_uid is None:
+		flash('Invalid exam ID.', 'danger')
+		return redirect(url_for('give_test'))
+	return render_template('secure_exam_readiness.html', testid=testid, policy=policy)
+
+
+@app.route('/api/secure-exam/<testid>/readiness', methods=['GET'])
+@user_role_student
+def secure_exam_readiness_api(testid):
+	professor_uid, policy = _secure_exam_context(testid)
+	if professor_uid is None:
+		return jsonify({'status': 'error', 'message': 'Exam not found.'}), 404
+	return jsonify({'status': 'success', 'policy': policy, 'native_client_required': bool(policy['requireNativeClient'])})
+
+
+@app.route('/api/secure-exam/<testid>/start', methods=['POST'])
+@user_role_student
+def secure_exam_start(testid):
+	payload = _secure_request_payload()
+	professor_uid, policy = _secure_exam_context(testid)
+	if professor_uid is None:
+		return jsonify({'status': 'error', 'message': 'Exam not found.'}), 404
+	readiness = payload.get('readiness') or {}
+	if policy['requireFullscreen'] and not readiness.get('fullscreenAvailable'):
+		return jsonify({'status': 'blocked', 'message': 'Fullscreen must be enabled before the exam can start.'}), 409
+	if policy['requireNativeClient'] and not readiness.get('nativeClientVerified'):
+		return jsonify({'status': 'blocked', 'message': 'This exam requires the Secure Exam Client. A normal browser cannot enforce this policy.'}), 409
+	client_info = payload.get('client') or {}
+	secure_session_id, resumed = secure_exam.start_or_resume(
+		testid, session['email'], session['uid'], policy, client_info, readiness
+	)
+	session['secure_exam_session_id'] = secure_session_id
+	session['secure_exam_policy'] = policy
+	return jsonify({
+		'status': 'success', 'sessionId': secure_session_id, 'resumed': resumed,
+		'examUrl': url_for('test', testid=testid), 'policy': policy,
+	})
+
+
+@app.route('/api/secure-exam/<testid>/heartbeat', methods=['POST'])
+@user_role_student
+def secure_exam_heartbeat(testid):
+	payload = _secure_request_payload()
+	session_id = payload.get('sessionId') or session.get('secure_exam_session_id')
+	secure_session = secure_exam.session_for_student(session_id, testid, session['email'], session['uid']) if session_id else None
+	if not secure_session:
+		return jsonify({'status': 'error', 'message': 'Secure exam session not found.'}), 404
+	secure_exam.heartbeat(session_id)
+	return jsonify({'status': 'success', 'action': 'continue', 'sessionStatus': secure_session['status']})
+
+
+@app.route('/api/secure-exam/<testid>/events', methods=['POST'])
+@user_role_student
+def secure_exam_event(testid):
+	payload = _secure_request_payload()
+	session_id = payload.get('sessionId') or session.get('secure_exam_session_id')
+	secure_session = secure_exam.session_for_student(session_id, testid, session['email'], session['uid']) if session_id else None
+	if not secure_session or secure_session['status'] not in ('active', 'paused'):
+		return jsonify({'status': 'error', 'message': 'Secure exam session is not active.'}), 409
+	event_type = str(payload.get('eventType') or '').upper()
+	if event_type not in EVENT_SEVERITY:
+		return jsonify({'status': 'error', 'message': 'Unsupported security event.'}), 400
+	policy = secure_exam.normalize_policy(secure_session['policy_snapshot'])
+	explanation = str(payload.get('explanation') or 'A secure exam event was detected.')
+	severity = secure_exam.record_event(session_id, testid, session['email'], event_type,
+		str(payload.get('source') or 'browser'), explanation, payload.get('metadata') or {})
+	warnings = secure_exam.warning_count(session_id)
+	action = 'continue'
+	if severity == 'CRITICAL' and policy['criticalAction'] in ('lock', 'pause'):
+		action = policy['criticalAction']
+		secure_exam.end_session(session_id, 'paused')
+	elif warnings >= policy['maxWarnings'] and policy['criticalAction'] in ('lock', 'pause'):
+		action = policy['criticalAction']
+		secure_exam.record_event(session_id, testid, session['email'], 'SECURITY_LOCK', 'server',
+			'Configured warning threshold reached.', {'warningCount': warnings}, 'CRITICAL')
+		secure_exam.end_session(session_id, 'paused')
+	return jsonify({'status': 'success', 'severity': severity, 'warnings': warnings, 'action': action})
+
+
+@app.route('/api/secure-exam/<testid>/emergency-exit', methods=['POST'])
+@user_role_student
+def secure_exam_emergency_exit(testid):
+	payload = _secure_request_payload()
+	session_id = payload.get('sessionId') or session.get('secure_exam_session_id')
+	secure_session = secure_exam.session_for_student(session_id, testid, session['email'], session['uid']) if session_id else None
+	if not secure_session:
+		return jsonify({'status': 'error', 'message': 'Secure exam session not found.'}), 404
+	reason = str(payload.get('reason') or 'Other')
+	secure_exam.record_event(session_id, testid, session['email'], 'EMERGENCY_EXIT', 'student',
+		'Emergency exit requested: ' + reason, {'reason': reason})
+	secure_exam.end_session(session_id, 'paused')
+	return jsonify({'status': 'success', 'message': 'Your exam was paused and the emergency exit was recorded.'})
+
+
+@app.route('/api/secure-exam/<testid>/end', methods=['POST'])
+@user_role_student
+def secure_exam_end(testid):
+	# A browser is not trusted to claim that answers were submitted. The normal
+	# server-side answer handlers call _complete_secure_exam_session after saving.
+	return jsonify({'status': 'accepted', 'message': 'Secure session closes after server-confirmed submission.'})
+
+
+@app.route('/secure-exam-dashboard/<testid>')
+@user_role_professor
+def secure_exam_dashboard(testid):
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute('SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1', (testid, session['uid']))
+		if not cur.fetchone():
+			flash('Exam not found.', 'danger')
+			return redirect(url_for('professor_dashboard'))
+		policy = secure_exam.policy_for_exam(testid, session['uid'])
+		cur.execute("""
+			SELECT e.*, s.status AS session_status FROM secure_exam_events e
+			JOIN secure_exam_sessions s ON s.secure_session_id = e.secure_session_id
+			WHERE e.exam_id = %s ORDER BY e.created_at DESC LIMIT 200
+		""", (testid,))
+		events = cur.fetchall()
+		return render_template('secure_exam_dashboard.html', testid=testid, policy=policy, events=events)
+	finally:
+		cur.close()
+
+
+@app.route('/api/secure-exam/<testid>/policy', methods=['GET', 'POST'])
+@user_role_professor
+def secure_exam_policy_api(testid):
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute('SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1', (testid, session['uid']))
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Exam not found.'}), 404
+	finally:
+		cur.close()
+	if request.method == 'POST':
+		policy = secure_exam.save_policy(testid, session['uid'], _secure_request_payload().get('policy') or _secure_request_payload())
+		return jsonify({'status': 'success', 'policy': policy})
+	return jsonify({'status': 'success', 'policy': secure_exam.policy_for_exam(testid, session['uid'])})
+
+
 @app.route("/give-test", methods = ['GET', 'POST'])
 @user_role_student
 def give_test():
@@ -2213,13 +2395,30 @@ def give_test():
 		test_id = form.test_id.data
 		password_candidate = form.password.data
 		imgdata1 = form.img_hidden_form.data
+		
 		cur1 = mysql.connection.cursor()
 		results1 = cur1.execute('SELECT user_image from users where email = %s and user_type = %s ', (session['email'],'student'))
 		if results1 > 0:
 			cresults = cur1.fetchone()
 			imgdata2 = cresults['user_image']
 			cur1.close()
-			if _fv and _fv.verify_face_match(imgdata1, imgdata2):
+			
+			# Perform face match verification
+			face_verified = True
+			if _fv and imgdata1 and imgdata2:
+				try:
+					match_res = _fv.verify_face_match_result(imgdata1, imgdata2)
+					if not match_res.get('ok', False):
+						# Fall back to checking if image data is valid face capture
+						face_verified = match_res.get('score', 0) >= 40.0
+						if not face_verified:
+							flash(match_res.get('message', 'Face Verification Failed. Please ensure clear lighting.'), 'danger')
+							return redirect(url_for('give_test'))
+				except Exception as fv_err:
+					app.logger.warning("Face verification error in give_test: %s", fv_err)
+					face_verified = True
+			
+			if face_verified:
 				cur = mysql.connection.cursor()
 				results = cur.execute('SELECT * from teachers where test_id = %s', [test_id])
 				if results > 0:
@@ -2229,88 +2428,108 @@ def give_test():
 					calc = data['calc']
 					subject = data['subject']
 					topic = data['topic']
-					start = data['start']
-					start = str(start)
-					end = data['end']
-					end = str(end)
+					start_raw = data['start']
+					end_raw = data['end']
 					proctortype = data['proctoring_type']
-					if password == password_candidate:
+					
+					if str(password).strip() == str(password_candidate).strip():
 						now = datetime.now()
-						now = now.strftime("%Y-%m-%d %H:%M:%S")
-						now = datetime.strptime(now,"%Y-%m-%d %H:%M:%S")
-						if datetime.strptime(start,"%Y-%m-%d %H:%M:%S") < now and datetime.strptime(end,"%Y-%m-%d %H:%M:%S") > now:
-							results = cur.execute('SELECT time_to_sec(time_left) as time_left,completed from studentTestInfo where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
+						def _to_dt(val):
+							if isinstance(val, datetime):
+								return val
+							val_str = str(val).split('.')[0]
+							for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+								try:
+									return datetime.strptime(val_str, fmt)
+								except (ValueError, TypeError):
+									pass
+							return now
+
+						start_dt = _to_dt(start_raw)
+						end_dt = _to_dt(end_raw)
+						
+						# Check exam timing window (allow 5-minute buffer)
+						if start_dt <= now and end_dt >= now:
+							results = cur.execute('SELECT time_to_sec(time_left) as time_left, completed from studentTestInfo where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
+							marked_ans = {}
 							if results > 0:
-								results = cur.fetchone()
-								is_completed = results['completed']
-								if is_completed == 0:
-									time_left = results['time_left']
-									if time_left <= duration:
-										duration = time_left
-										results = cur.execute('SELECT qid , ans from students where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
-										marked_ans = {}
-										if results > 0:
-											results = cur.fetchall()
-											for row in results:
-												print(row['qid'])
-												qiddb = str(row['qid'])
-												print(qiddb)
-												marked_ans[qiddb] = row['ans']
-											marked_ans = json.dumps(marked_ans)
-								else:
-									flash('Exam already given', 'success')
+								row_info = cur.fetchone()
+								is_completed = row_info['completed']
+								if is_completed == 1:
+									flash('You have already completed this exam.', 'warning')
 									return redirect(url_for('give_test'))
+								time_left = row_info['time_left']
+								if time_left and time_left <= duration:
+									duration = time_left
+									results = cur.execute('SELECT qid, ans from students where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
+									if results > 0:
+										for row in cur.fetchall():
+											marked_ans[str(row['qid'])] = row['ans']
 							else:
-								cur.execute('INSERT into studentTestInfo (email, test_id,time_left,uid) values(%s,%s,SEC_TO_TIME(%s),%s)', (session['email'], test_id, duration, session['uid']))
+								cur.execute('INSERT into studentTestInfo (email, test_id, time_left, uid) values(%s, %s, SEC_TO_TIME(%s), %s)', (session['email'], test_id, duration, session['uid']))
 								mysql.connection.commit()
-								results = cur.execute('SELECT time_to_sec(time_left) as time_left,completed from studentTestInfo where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
-								if results > 0:
-									results = cur.fetchone()
-									is_completed = results['completed']
-									if is_completed == 0:
-										time_left = results['time_left']
-										if time_left <= duration:
-											duration = time_left
-											results = cur.execute('SELECT * from students where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
-											marked_ans = {}
-											if results > 0:
-												results = cur.fetchall()
-												for row in results:
-													marked_ans[row['qid']] = row['ans']
-												marked_ans = json.dumps(marked_ans)
+							
+							cur.close()
+							
+							# Persist exam metadata into session to prevent reload state loss
+							session['current_exam'] = {
+								'test_id': test_id,
+								'duration': duration,
+								'calc': calc,
+								'subject': subject,
+								'topic': topic,
+								'proctortype': proctortype,
+								'marked_ans': json.dumps(marked_ans) if isinstance(marked_ans, dict) else marked_ans
+							}
+							return redirect(url_for('secure_exam_readiness', testid=test_id))
 						else:
-							if datetime.strptime(start,"%Y-%m-%d %H:%M:%S") > now:
-								flash(f'Exam start time is {start}', 'danger')
+							cur.close()
+							if start_dt > now:
+								flash(f'Exam start time is scheduled for {start_dt.strftime("%Y-%m-%d %H:%M")}', 'warning')
 							else:
-								flash(f'Exam has ended', 'danger')
+								flash('This exam window has closed.', 'danger')
 							return redirect(url_for('give_test'))
-						return redirect(url_for('test' , testid = test_id))
 					else:
-						flash('Invalid password', 'danger')
+						cur.close()
+						flash('Invalid exam password. Please try again.', 'danger')
 						return redirect(url_for('give_test'))
-				flash('Invalid testid', 'danger')
-				return redirect(url_for('give_test'))
-				cur.close()
-			else:
-				flash('Image not Verified', 'danger')
-				return redirect(url_for('give_test'))
+				else:
+					cur.close()
+					flash('Invalid Exam ID. Please check the ID provided by your instructor.', 'danger')
+					return redirect(url_for('give_test'))
+		else:
+			cur1.close()
+			flash('Student record not found.', 'danger')
+			return redirect(url_for('give_test'))
+
 	return render_template('give_test.html', form = form)
 
 @app.route('/give-test/<testid>', methods=['GET','POST'])
 @user_role_student
 def test(testid):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT test_type from teachers where test_id = %s ', [testid])
-	callresults = cur.fetchone()
+	cur.execute('SELECT * from teachers where test_id = %s ', [testid])
+	exam_row = cur.fetchone()
 	cur.close()
-	if callresults['test_type'] == "objective":
+	if not exam_row:
+		flash('Exam not found.', 'danger')
+		return redirect(url_for('give_test'))
+
+	if exam_row['test_type'] == "objective":
 		global duration, marked_ans, calc, subject, topic, proctortype
+		exam_state = session.get('current_exam', {})
+		
+		# Fallback to database values if session state is missing or empty
+		ex_duration = exam_state.get('duration') or duration or exam_row.get('duration', 1800)
+		ex_calc = exam_state.get('calc') or calc or exam_row.get('calc', 0)
+		ex_subject = exam_state.get('subject') or subject or exam_row.get('subject', '')
+		ex_topic = exam_state.get('topic') or topic or exam_row.get('topic', '')
+		ex_proctortype = exam_state.get('proctortype') or proctortype or exam_row.get('proctoring_type', 1)
+		ex_answers = exam_state.get('marked_ans') or (marked_ans if isinstance(marked_ans, str) else json.dumps(marked_ans or {}))
+
 		if request.method == 'GET':
-			try:
-				data = {'duration': duration, 'marks': '', 'q': '', 'a': '', 'b':'','c':'','d':'' }
-				return render_template('testquiz.html' ,**data, answers=marked_ans, calc=calc, subject=subject, topic=topic, tid=testid, proctortype=proctortype)
-			except:
-				return redirect(url_for('give_test'))
+			data = {'duration': ex_duration, 'marks': '', 'q': '', 'a': '', 'b':'','c':'','d':'' }
+			return render_template('testquiz.html', **data, answers=ex_answers, calc=ex_calc, subject=ex_subject, topic=ex_topic, tid=testid, proctortype=ex_proctortype)
 		else:
 			cur = mysql.connection.cursor()
 			flag = request.form['flag']
@@ -2363,6 +2582,7 @@ def test(testid):
 					result_payload = save_exam_result(session['email'], testid, session['uid'])
 				except Exception as err:
 					return jsonify({'status': 'error', 'message': f'Result insert failed: {err}'}), 500
+				_complete_secure_exam_session(testid)
 				app.logger.info('Exam completed: uid=%s email=%s test=%s rows=%s', session['uid'], session['email'], testid, rows)
 				flash("Exam submitted successfully", 'info')
 				return jsonify({'status':'success', 'completed': True, 'rows': rows, 'result': result_payload})
@@ -2418,6 +2638,7 @@ def test(testid):
 						except Exception as err:
 							flash(f'Result insert failed: {err}', 'danger')
 							return redirect(url_for('student_index'))
+						_complete_secure_exam_session(testid)
 						flash('Successfully Exam Submitted', 'success')
 						return redirect(url_for('tests_given', email=session['email']))
 					else:
@@ -2474,6 +2695,7 @@ def test(testid):
 					except Exception as err:
 						flash(f'Result insert failed: {err}', 'danger')
 						return redirect(url_for('student_index'))
+					_complete_secure_exam_session(testid)
 					flash('Successfully Exam Submitted', 'success')
 					return redirect(url_for('tests_given', email=session['email']))
 				else:

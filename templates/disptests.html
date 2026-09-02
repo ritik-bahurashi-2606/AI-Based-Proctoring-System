@@ -20,6 +20,7 @@
                                 <th class="border-0" scope="col" >Subject</th>
                                 <th class="border-0" scope="col" >Topic</th>
                                 <th class="border-0" scope="col" >Share</th>
+                                <th class="border-0" scope="col" >Secure Mode</th>
                             </tr>
 							 <tbody>
             {% for test in tests %}
@@ -27,8 +28,9 @@
 								<td>{{test['test_id']}}</td>
                                 <td>{{test['password']}}</td>
 								<td>{{test['subject']}}</td>
-								<td>{{test['topic']}}</td>
+                                <td>{{test['topic']}}</td>
                                 <td><a class="btn btn-primary" href="/{{session.email}}/{{test['test_id']}}/share_details">Share</a></td>
+                                <td><a class="btn btn-outline-primary" href="{{ url_for('secure_exam_dashboard', testid=test['test_id']) }}">Integrity timeline</a></td>
                              </tr>
             {% endfor %}
                                   </tbody>
