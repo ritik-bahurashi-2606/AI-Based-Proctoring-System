@@ -45,6 +45,7 @@ CREATE TABLE `exam_results` (
   `correct_answers` int(11) NOT NULL DEFAULT '0',
   `wrong_answers` int(11) NOT NULL DEFAULT '0',
   `marks` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `total_marks` decimal(10,2) NOT NULL DEFAULT '0.00',
   `percentage` decimal(6,2) NOT NULL DEFAULT '0.00',
   `result_status` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL,
   `submission_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,

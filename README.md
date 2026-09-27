@@ -114,6 +114,14 @@ first use. Downloaded runtime model caches such as `yolov8n.pt` and
 `models/models/` are intentionally ignored by Git; commit only source code,
 configuration templates, and intentionally managed model assets.
 
+Gaze and head movement checks use a short per-student calibration window,
+smoothed pose values, and temporal confirmation. Brief glances and blinks are
+shown no persistent violation; a warning appears only after sustained deviation,
+and a database event requires sustained gaze together with head-direction
+evidence or repeated deviation episodes. The calibration and timing behavior
+can be tuned with `PROCTOR_CALIBRATION_SECONDS`, `PROCTOR_GAZE_WARNING_SECONDS`,
+and `PROCTOR_GAZE_DEVIATION_SECONDS`.
+
 Invalid or unavailable upgraded backends fail gracefully by returning to the
 legacy OpenCV/TensorFlow/YOLOv3 path where that path exists. Face matching uses
 InsightFace first in `auto` mode and falls back to DeepFace if embeddings cannot
@@ -164,4 +172,3 @@ requirements.txt          Python dependencies
 ## License
 
 This project is intended for academic and educational use. Add a license file before public production use.
-

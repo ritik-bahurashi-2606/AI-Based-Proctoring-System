@@ -21,7 +21,10 @@ IMAGE_PLACEHOLDERS = {"", "no_camera"}
 DEFAULT_FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "66"))
 EAR_LIVENESS_THRESHOLD = float(os.getenv("EAR_LIVENESS_THRESHOLD", "0.10"))
 MIN_FACE_AREA_RATIO = float(os.getenv("FACE_MIN_AREA_RATIO", "0.08"))
-MIN_BLUR_VARIANCE = float(os.getenv("FACE_MIN_BLUR_VARIANCE", "75"))
+# Laptop webcams and JPEG capture commonly produce face-region scores below
+# 75 despite retaining enough detail for later face matching. Keep a floor to
+# reject genuinely defocused frames while accepting normal webcam images.
+MIN_BLUR_VARIANCE = float(os.getenv("FACE_MIN_BLUR_VARIANCE", "45"))
 MIN_BRIGHTNESS = float(os.getenv("FACE_MIN_BRIGHTNESS", "45"))
 MAX_BRIGHTNESS = float(os.getenv("FACE_MAX_BRIGHTNESS", "220"))
 MAX_FACE_CENTER_OFFSET = float(os.getenv("FACE_MAX_CENTER_OFFSET", "0.22"))
@@ -148,10 +151,12 @@ def check_liveness(image_bgr):
         ear_right = _eye_aspect_ratio(right_eye)
         ear_avg = (ear_left + ear_right) / 2.0
 
-        result["ear_left"] = round(ear_left, 4)
-        result["ear_right"] = round(ear_right, 4)
-        result["ear_avg"] = round(ear_avg, 4)
-        result["is_live"] = ear_avg >= EAR_LIVENESS_THRESHOLD
+        # NumPy scalar values are not JSON serializable by Flask. The
+        # registration quality endpoint returns this payload directly.
+        result["ear_left"] = round(float(ear_left), 4)
+        result["ear_right"] = round(float(ear_right), 4)
+        result["ear_avg"] = round(float(ear_avg), 4)
+        result["is_live"] = bool(ear_avg >= EAR_LIVENESS_THRESHOLD)
     except Exception as exc:
         logger.warning("Liveness check error: %s", exc)
     return result
@@ -201,6 +206,7 @@ def assess_face_capture(image_bgr, require_liveness=False):
         return _empty_result(
             message="The face photo is blurry. Hold still and retake a clear photo.",
             blur_variance=round(blur_variance, 2),
+            minimum_blur_variance=MIN_BLUR_VARIANCE,
         )
     if brightness < MIN_BRIGHTNESS:
         return _empty_result(

@@ -387,9 +387,14 @@ function captureAndCheck() {
   if (!cameraStream) { setFieldError('face','Camera not available. Please allow camera access and reload.'); return; }
   if (!faceDetected) { setFieldError('face','No face detected. Position your face clearly in the camera.'); return; }
 
+  var sourceWidth = videoEl.videoWidth || 640;
+  var sourceHeight = videoEl.videoHeight || 480;
+  var maxCaptureWidth = 640;
+  var scale = Math.min(1, maxCaptureWidth / sourceWidth);
   var off = document.createElement('canvas');
-  off.width = 320; off.height = 240;
-  off.getContext('2d').drawImage(videoEl, 0, 0, 320, 240);
+  off.width = Math.round(sourceWidth * scale);
+  off.height = Math.round(sourceHeight * scale);
+  off.getContext('2d').drawImage(videoEl, 0, 0, off.width, off.height);
   var dataURL = off.toDataURL('image/jpeg', 0.85);
   var b64     = dataURL.replace('data:image/jpeg;base64,', '');
 
@@ -426,8 +431,13 @@ function captureAndCheck() {
       btnCapture.disabled  = false;
       btnCapture.onclick   = resetCapture;
     } else {
-      showBanner(false, res.message || 'Face check failed. Please retake the photo.');
-      setFieldError('face', res.message || 'Face verification failed. Please retake the photo.');
+      var qualityMessage = res.message || 'Face check failed. Please retake the photo.';
+      if (typeof res.blur_variance === 'number' && typeof res.minimum_blur_variance === 'number') {
+        qualityMessage += ' Clarity score: ' + res.blur_variance + ' (minimum: ' + res.minimum_blur_variance + ').';
+      }
+      console.warn('Registration face quality rejected:', res);
+      showBanner(false, qualityMessage);
+      setFieldError('face', qualityMessage);
       btnCapture.innerHTML = '<i class="fas fa-camera mr-1"></i>Retake Photo';
       btnCapture.className = 'btn btn-danger w-100 mt-2';
       btnCapture.disabled  = false;

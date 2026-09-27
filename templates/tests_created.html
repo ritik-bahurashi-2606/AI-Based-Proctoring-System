@@ -6,13 +6,44 @@
     <div class="col-md-4 mb-2"><input id="resultSearch" class="form-control" placeholder="Search exam, student, email, subject, topic"></div>
     <div class="col-md-2 mb-2"><input id="resultDate" type="date" class="form-control"></div>
     <div class="col-md-2 mb-2"><select id="riskFilter" class="form-control"><option value="">All Risks</option><option>Safe</option><option>Moderate</option><option>High Risk</option></select></div>
-    <div class="col-md-2 mb-2"><select id="statusFilter" class="form-control"><option value="">Pass/Fail</option><option>Pass</option><option>Fail</option></select></div>
-    <div class="col-md-2 mb-2"><select id="sortBy" class="form-control"><option value="submission_time">Submission Time</option><option value="marks">Marks</option></select></div>
+    <div class="col-md-4 mb-2"><select id="sortBy" class="form-control"><option value="submission_time">Submission Time</option><option value="marks">Marks</option></select></div>
   </div>
   <div class="table-responsive">
     <table class="table table-centered table-nowrap mb-0 rounded" id="profResultsTable">
-      <thead class="thead-light"><tr><th>Exam ID</th><th>Student ID</th><th>Name</th><th>Email</th><th>Subject</th><th>Topic</th><th>Marks</th><th>Percentage</th><th>Pass/Fail</th><th>Submission Time</th><th>Risk Score</th><th>Risk Level</th></tr></thead>
-      <tbody></tbody>
+      <thead class="thead-light">
+        <tr>
+          <th>Student Name</th>
+          <th>Student Email</th>
+          <th>Student ID</th>
+          <th>Exam ID</th>
+          <th>Subject</th>
+          <th>Topic</th>
+          <th>Obtained Marks</th>
+          <th>Total Marks</th>
+          <th>Percentage</th>
+          <th>Submission Time</th>
+          <th>Risk Score</th>
+          <th>Risk Level</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for test in results %}
+        <tr>
+          <td>{{ test['student_name'] }}</td>
+          <td>{{ test['student_email'] }}</td>
+          <td>{{ test['student_id'] }}</td>
+          <td>{{ test['exam_id'] }}</td>
+          <td>{{ test['subject'] }}</td>
+          <td>{{ test['topic'] }}</td>
+          <td>{{ test['marks'] }}</td>
+          <td>{{ test['total_marks'] if (test['total_marks'] is defined and test['total_marks'] > 0) else (test['total_questions'] if (test['total_questions'] is defined and test['total_questions'] > 0) else 0) }}</td>
+          <td>{{ '%.2f'|format(test['percentage']|float) if test['percentage'] is not none else '0.00' }}%</td>
+          <td>{{ test['submission_time'] }}</td>
+          <td>{{ test['cheating_risk_score'] }}</td>
+          <td>{{ test['risk_level'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
     </table>
   </div>
   <h4 id="noResults" class="text-center mt-4" style="display:none;">No Records Found!</h4>
@@ -21,14 +52,39 @@
 let resultTimer;
 function renderProfessorResults(rows) {
   const tbody = document.querySelector('#profResultsTable tbody');
+  if (!tbody) return;
   document.getElementById('noResults').style.display = rows.length ? 'none' : 'block';
-  tbody.innerHTML = rows.map(r => `<tr><td>${r.exam_id}</td><td>${r.student_id}</td><td>${r.student_name}</td><td>${r.student_email}</td><td>${r.subject}</td><td>${r.topic}</td><td>${r.marks}</td><td>${r.percentage}%</td><td>${r.result_status}</td><td>${r.submission_time}</td><td>${r.cheating_risk_score}</td><td>${r.risk_level}</td></tr>`).join('');
+  tbody.innerHTML = rows.map(r => {
+    const totalMarks = (r.total_marks !== undefined && r.total_marks !== null && Number(r.total_marks) > 0) 
+      ? r.total_marks 
+      : (r.total_questions || 0);
+    const pct = (r.percentage !== undefined && r.percentage !== null) 
+      ? Number(r.percentage).toFixed(2).replace(/\.00$/, '') 
+      : '0';
+    return `<tr>
+      <td>${r.student_name || ''}</td>
+      <td>${r.student_email || ''}</td>
+      <td>${r.student_id || ''}</td>
+      <td>${r.exam_id || ''}</td>
+      <td>${r.subject || ''}</td>
+      <td>${r.topic || ''}</td>
+      <td>${r.marks !== undefined ? r.marks : 0}</td>
+      <td>${totalMarks}</td>
+      <td>${pct}%</td>
+      <td>${r.submission_time || ''}</td>
+      <td>${r.cheating_risk_score !== undefined ? r.cheating_risk_score : 0}</td>
+      <td>${r.risk_level || 'Safe'}</td>
+    </tr>`;
+  }).join('');
 }
 function loadProfessorResults() {
-  const params = new URLSearchParams({search: resultSearch.value, date: resultDate.value, risk_level: riskFilter.value, result_status: statusFilter.value, sort_by: sortBy.value});
+  const params = new URLSearchParams({search: resultSearch.value, date: resultDate.value, risk_level: riskFilter.value, sort_by: sortBy.value});
   fetch(`/api/professor-results?${params}`).then(r => r.json()).then(data => { if (data.status === 'success') renderProfessorResults(data.results); });
 }
-['resultSearch','resultDate','riskFilter','statusFilter','sortBy'].forEach(id => document.getElementById(id).addEventListener('input', () => { clearTimeout(resultTimer); resultTimer = setTimeout(loadProfessorResults, 200); }));
+['resultSearch','resultDate','riskFilter','sortBy'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => { clearTimeout(resultTimer); resultTimer = setTimeout(loadProfessorResults, 200); });
+});
 loadProfessorResults();
 </script>
 {% endblock %}

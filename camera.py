@@ -18,8 +18,8 @@ import time
 from collections import deque
 
 # ── Configurable thresholds (env-overridable) ─────────────────────────────────
-_HEAD_YAW_THRESH   = float(os.getenv('PROCTOR_HEAD_YAW_THRESHOLD',  '38'))   # degrees
-_HEAD_PITCH_THRESH = float(os.getenv('PROCTOR_HEAD_PITCH_THRESHOLD', '32'))   # degrees
+_HEAD_YAW_THRESH   = float(os.getenv('PROCTOR_HEAD_YAW_THRESHOLD',  '25'))   # degrees
+_HEAD_PITCH_THRESH = float(os.getenv('PROCTOR_HEAD_PITCH_THRESHOLD', '20'))   # degrees
 _SMOOTHING_ALPHA   = 0.18   # EMA smoothing factor (lower = smoother)
 _EAR_BLINK_THRESH  = 0.18   # eye aspect ratio below → blink, skip gaze
 
@@ -509,11 +509,19 @@ def get_frame(imgData):
             elif gaze_tracker.is_left():
                 eye_movements  = 3
                 gaze_confidence = min(1.0, 1.0 - (gaze_tracker.horizontal_ratio() or 0.3))
-            elif gaze_tracker.is_center():
-                eye_movements  = 2
-                gaze_confidence = 0.9
+            elif gaze_tracker.pupils_located:
+                vertical_ratios = gaze_tracker.vertical_ratios()
+                if vertical_ratios[0] <= 0.38 and vertical_ratios[1] <= 0.38:
+                    eye_movements = 5
+                    gaze_confidence = 0.75
+                elif vertical_ratios[0] >= 0.62 and vertical_ratios[1] >= 0.62:
+                    eye_movements = 6
+                    gaze_confidence = 0.75
+                else:
+                    eye_movements = 2
+                    gaze_confidence = 0.9
             else:
-                eye_movements  = 0
+                eye_movements = 0
         except Exception as ge:
             print(f"Gaze tracking error: {ge}")
             eye_movements = 0

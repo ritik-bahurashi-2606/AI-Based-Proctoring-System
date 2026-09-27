@@ -17,13 +17,15 @@ PROCTOR_EVENT_COOLDOWN_SECONDS = float(os.getenv("PROCTOR_EVENT_COOLDOWN_SECONDS
 PROCTOR_FACE_OUT_OF_FRAME_SECONDS = float(os.getenv("PROCTOR_FACE_OUT_OF_FRAME_SECONDS", "4"))
 PROCTOR_FACE_PARTIAL_SECONDS = float(os.getenv("PROCTOR_FACE_PARTIAL_SECONDS", "5"))
 PROCTOR_HEAD_MOVE_WINDOW_SECONDS = float(os.getenv("PROCTOR_HEAD_MOVE_WINDOW_SECONDS", "10"))
-PROCTOR_HEAD_YAW_THRESHOLD = float(os.getenv("PROCTOR_HEAD_YAW_THRESHOLD", "38.0")) # Degrees
-PROCTOR_HEAD_PITCH_THRESHOLD = float(os.getenv("PROCTOR_HEAD_PITCH_THRESHOLD", "32.0")) # Degrees
-PROCTOR_HEAD_TURN_SECONDS = float(os.getenv("PROCTOR_HEAD_TURN_SECONDS", "2.5"))
+PROCTOR_HEAD_YAW_THRESHOLD = float(os.getenv("PROCTOR_HEAD_YAW_THRESHOLD", "25.0")) # Degrees
+PROCTOR_HEAD_PITCH_THRESHOLD = float(os.getenv("PROCTOR_HEAD_PITCH_THRESHOLD", "20.0")) # Degrees
+PROCTOR_HEAD_TURN_SECONDS = float(os.getenv("PROCTOR_HEAD_TURN_SECONDS", "3.0"))
 PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW = int(os.getenv("PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW", "6"))
-PROCTOR_GAZE_DEVIATION_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_SECONDS", "5.0"))
+PROCTOR_GAZE_WARNING_SECONDS = float(os.getenv("PROCTOR_GAZE_WARNING_SECONDS", "2.0"))
+PROCTOR_GAZE_DEVIATION_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_SECONDS", "2.0"))
 PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS", "8"))
 PROCTOR_GAZE_DEVIATION_REPEAT_COUNT = int(os.getenv("PROCTOR_GAZE_DEVIATION_REPEAT_COUNT", "7"))
+PROCTOR_CALIBRATION_SECONDS = float(os.getenv("PROCTOR_CALIBRATION_SECONDS", "5"))
 PROCTOR_ABSENT_SECONDS = float(os.getenv("PROCTOR_ABSENT_SECONDS", "4"))
 PROCTOR_FACE_HIDDEN_SECONDS = float(os.getenv("PROCTOR_FACE_HIDDEN_SECONDS", "3"))
 YOLO_PHONE_SCORE_MIN = float(os.getenv("YOLO_PHONE_SCORE_MIN", "0.52"))
@@ -98,6 +100,10 @@ _state = defaultdict(lambda: {
     "last_head_movement_event_time": 0,
     "last_gaze_deviation_event_time": 0,
     "gaze_history": [],
+    "gaze_deviation_started_at": None,
+    "calibration_started_at": None,
+    "calibration_samples": [],
+    "calibration_baseline": None,
     "absent_started_at": None,
     "face_hidden_started_at": None,
 })
@@ -223,99 +229,78 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
         confidence = min(1.0, voice_value / max(PROCTOR_AUDIO_THRESHOLD * 2.0, 1))
         candidates.append(_event("suspicious_audio", confidence=confidence))
 
-    # --- Enhanced Head Movement Detection ---
-    state["head_yaw_history"].append((now, head_yaw))
-    state["head_pitch_history"].append((now, head_pitch))
-    state["head_roll_history"].append((now, head_roll))
+    # Establish a short personal baseline for head pose. Eye direction is
+    # evaluated independently because it is already normalized by the tracker.
+    if person_status == 1 and face_in_frame_status == 1:
+        if state["calibration_started_at"] is None:
+            state["calibration_started_at"] = now
+        if not state["calibration_baseline"]:
+            state["calibration_samples"].append((head_yaw, head_pitch))
+            if now - state["calibration_started_at"] >= PROCTOR_CALIBRATION_SECONDS:
+                samples = state["calibration_samples"]
+                state["calibration_baseline"] = (
+                    float(np.median([sample[0] for sample in samples])),
+                    float(np.median([sample[1] for sample in samples])),
+                )
+    elif state["calibration_started_at"] is None:
+        state["calibration_started_at"] = now
 
-    # Keep history windowed
-    state["head_yaw_history"] = [(t, v) for t, v in state["head_yaw_history"] if now - t < PROCTOR_HEAD_MOVE_WINDOW_SECONDS]
-    state["head_pitch_history"] = [(t, v) for t, v in state["head_pitch_history"] if now - t < PROCTOR_HEAD_MOVE_WINDOW_SECONDS]
-    state["head_roll_history"] = [(t, v) for t, v in state["head_roll_history"] if now - t < PROCTOR_HEAD_MOVE_WINDOW_SECONDS]
-
-    # Detect specific head turns/tilts
-    head_turned_away = False
-    if abs(head_yaw) > PROCTOR_HEAD_YAW_THRESHOLD:
-        event_type = "head_turned_left" if head_yaw < 0 else "head_turned_right"
-        candidates.append(_event(event_type, confidence=min(1.0, abs(head_yaw) / PROCTOR_HEAD_YAW_THRESHOLD)))
-        head_turned_away = True
-    if abs(head_pitch) > PROCTOR_HEAD_PITCH_THRESHOLD:
-        event_type = "head_tilted_up" if head_pitch > 0 else "head_tilted_down"
-        candidates.append(_event(event_type, confidence=min(1.0, abs(head_pitch) / PROCTOR_HEAD_PITCH_THRESHOLD)))
-        head_turned_away = True
-    # Roll is less indicative of cheating, but can be logged if needed
-    # if abs(head_roll) > PROCTOR_HEAD_ROLL_THRESHOLD:
-    #     candidates.append(_event("head_tilted_side", confidence=min(1.0, abs(head_roll) / PROCTOR_HEAD_ROLL_THRESHOLD)))
-
-    # Prolonged head turn (separate timer from gaze — avoids cancelling gaze timers)
+    baseline_yaw, baseline_pitch = state["calibration_baseline"] or (0.0, 0.0)
+    movement_evaluable = bool(state["calibration_baseline"])
+    relative_yaw = head_yaw - baseline_yaw
+    relative_pitch = head_pitch - baseline_pitch
+    # Head pose is usable before calibration too; the baseline, once available,
+    # only compensates for a student's natural centered posture.
+    effective_yaw = relative_yaw if movement_evaluable else head_yaw
+    effective_pitch = relative_pitch if movement_evaluable else head_pitch
+    head_turned_away = (
+        abs(effective_yaw) > PROCTOR_HEAD_YAW_THRESHOLD
+        or abs(effective_pitch) > PROCTOR_HEAD_PITCH_THRESHOLD
+    )
     if head_turned_away:
         if state["head_turn_prolong_start"] is None:
             state["head_turn_prolong_start"] = now
-        duration = now - state["head_turn_prolong_start"]
-        if duration >= PROCTOR_HEAD_TURN_SECONDS:
+        head_duration = now - state["head_turn_prolong_start"]
+        if head_duration >= PROCTOR_HEAD_TURN_SECONDS:
+            if effective_yaw < -PROCTOR_HEAD_YAW_THRESHOLD:
+                head_event = "head_turned_left"
+            elif effective_yaw > PROCTOR_HEAD_YAW_THRESHOLD:
+                head_event = "head_turned_right"
+            elif effective_pitch > PROCTOR_HEAD_PITCH_THRESHOLD:
+                head_event = "head_tilted_up"
+            else:
+                head_event = "head_tilted_down"
             candidates.append(
                 _event(
-                    "prolonged_head_turn",
-                    confidence=min(1.0, duration / PROCTOR_HEAD_TURN_SECONDS),
-                    duration=duration,
+                    head_event,
+                    confidence=min(
+                        1.0,
+                        max(abs(effective_yaw) / PROCTOR_HEAD_YAW_THRESHOLD,
+                            abs(effective_pitch) / PROCTOR_HEAD_PITCH_THRESHOLD),
+                    ),
+                    duration=head_duration,
                 )
             )
     else:
         state["head_turn_prolong_start"] = None
 
-    # Repeated head movement (using significant changes in angles)
-    if len(state["head_yaw_history"]) > 1:
-        significant_yaw_changes = sum(1 for i in range(1, len(state["head_yaw_history"])) if abs(state["head_yaw_history"][i][1] - state["head_yaw_history"][i-1][1]) > PROCTOR_HEAD_YAW_THRESHOLD * 0.75)
-        significant_pitch_changes = sum(1 for i in range(1, len(state["head_pitch_history"])) if abs(state["head_pitch_history"][i][1] - state["head_pitch_history"][i-1][1]) > PROCTOR_HEAD_PITCH_THRESHOLD * 0.75)
-        
-        if (significant_yaw_changes + significant_pitch_changes) >= PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW:
-            if now - state["last_head_movement_event_time"] > PROCTOR_EVENT_COOLDOWN_SECONDS:
-                candidates.append(_event("repeated_head_movement", confidence=min(1.0, (significant_yaw_changes + significant_pitch_changes) / PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW)))
-                state["last_head_movement_event_time"] = now
-
-    # --- Enhanced Eye Gaze Detection ---
-    gaze_deviated = False
-    if eyes == 3: # Looking left
-        candidates.append(_event("looking_away", confidence=0.7))
-        candidates.append(_event("head_turned_left", confidence=0.7)) # Infer from gaze
-        gaze_deviated = True
-    elif eyes == 4: # Looking right
-        candidates.append(_event("looking_away", confidence=0.7))
-        candidates.append(_event("head_turned_right", confidence=0.7)) # Infer from gaze
-        gaze_deviated = True
-    elif eyes == 5: # Looking up
-        candidates.append(_event("looking_up", confidence=0.7))
-        gaze_deviated = True
-    elif eyes == 6: # Looking down
-        candidates.append(_event("looking_down", confidence=0.7))
-        gaze_deviated = True
-    # eyes == 0 or blink: handled below (sustained face_hidden), not as instantaneous gaze deviation
-
-    # Combine head pitch with eye movements for vertical gaze inference (redundant but helps if gaze tracker misses)
-    if not gaze_deviated and abs(head_pitch) > PROCTOR_HEAD_PITCH_THRESHOLD:
-        if head_pitch > 0:
-            candidates.append(_event("looking_up", confidence=min(1.0, head_pitch / PROCTOR_HEAD_PITCH_THRESHOLD)))
-        else:
-            candidates.append(_event("looking_down", confidence=min(1.0, abs(head_pitch) / PROCTOR_HEAD_PITCH_THRESHOLD)))
-        gaze_deviated = True
-
-    # Prolonged gaze deviation (directional gaze / head pitch only — not shared with head-turn timer)
-    if gaze_deviated:
-        if state["gaze_prolong_start"] is None:
-            state["gaze_prolong_start"] = now
-        duration = now - state["gaze_prolong_start"]
-        if duration >= PROCTOR_GAZE_DEVIATION_SECONDS:
+    # Eye direction is a separate signal. A blink or unavailable eye result
+    # never starts the gaze timer.
+    gaze_deviated = eyes in (3, 4, 5, 6)
+    if gaze_deviated and not head_turned_away:
+        if state["gaze_deviation_started_at"] is None:
+            state["gaze_deviation_started_at"] = now
+        gaze_duration = now - state["gaze_deviation_started_at"]
+        state["gaze_prolong_start"] = state["gaze_deviation_started_at"]
+        if gaze_duration >= PROCTOR_GAZE_WARNING_SECONDS:
             candidates.append(
-                _event(
-                    "prolonged_gaze_deviation",
-                    confidence=min(1.0, duration / PROCTOR_GAZE_DEVIATION_SECONDS),
-                    duration=duration,
-                )
+                _event("looking_away", confidence=0.75, duration=gaze_duration)
             )
     else:
+        state["gaze_deviation_started_at"] = None
         state["gaze_prolong_start"] = None
 
-    # Eyes not located while landmarks say face is present — sustained to ignore blinks
+    # Eyes not located while landmarks say face is present — sustained to ignore blinks.
     if eyes == 0 and face_in_frame_status == 1 and person_status == 1:
         if state["face_hidden_started_at"] is None:
             state["face_hidden_started_at"] = now
@@ -331,19 +316,6 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
     else:
         state["face_hidden_started_at"] = None
 
-    # Repeated gaze deviation (using history of 'eyes' status)
-    state["gaze_history"].append((now, eyes))
-    state["gaze_history"] = [(t, v) for t, v in state["gaze_history"] if now - t < PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS]
-    deviated_gaze_count = sum(
-        1
-        for t, v in state["gaze_history"]
-        if v in (3, 4, 5, 6) or abs(head_pitch) > PROCTOR_HEAD_PITCH_THRESHOLD
-    )
-    if deviated_gaze_count >= PROCTOR_GAZE_DEVIATION_REPEAT_COUNT:
-        if now - state["last_gaze_deviation_event_time"] > PROCTOR_EVENT_COOLDOWN_SECONDS:
-            candidates.append(_event("repeated_gaze_deviation", confidence=min(1.0, deviated_gaze_count / PROCTOR_GAZE_DEVIATION_REPEAT_COUNT)))
-            state["last_gaze_deviation_event_time"] = now
-
     INSTANT_TRANSIENT_EVENTS = {
         "head_turned_left", "head_turned_right", "head_tilted_up", "head_tilted_down",
         "looking_away", "looking_up", "looking_down"
@@ -352,11 +324,25 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
     logged_events = []
     for candidate in candidates:
         event_type = candidate["event_type"]
-        if event_type not in INSTANT_TRANSIENT_EVENTS or candidate.get("duration") is not None:
+        sustained_duration = candidate.get("duration") or 0
+        if event_type == "looking_away":
+            if sustained_duration >= PROCTOR_GAZE_DEVIATION_SECONDS:
+                candidate["event_type"] = "prolonged_gaze_deviation"
+                candidate["message"] = EVENT_MESSAGES["prolonged_gaze_deviation"]
+                candidate["risk_score"] = EVENT_RISK["prolonged_gaze_deviation"]
+            else:
+                candidate["message"] = "Please keep your eyes on the screen."
             warnings.append(candidate)
-        if _cooldown_ok(state, event_type, now):
+        elif event_type not in INSTANT_TRANSIENT_EVENTS or sustained_duration >= PROCTOR_HEAD_TURN_SECONDS:
+            warnings.append(candidate)
+        log_type = candidate["event_type"]
+        should_persist = (
+            log_type not in INSTANT_TRANSIENT_EVENTS
+            or sustained_duration >= PROCTOR_HEAD_TURN_SECONDS
+        )
+        if should_persist and _cooldown_ok(state, log_type, now):
             duration = candidate.get("duration")
-            _mark_logged(state, event_type, now, duration)
+            _mark_logged(state, log_type, now, duration)
             # Add duration to event if it was a prolonged event
             if duration is not None: candidate['duration'] = round(duration, 2)
             logged_events.append(candidate)

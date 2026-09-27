@@ -115,14 +115,30 @@ function finish_test() {
     if (timerInterval) clearInterval(timerInterval);
     if (timeSyncInterval) clearInterval(timeSyncInterval);
     if (typeof window.stopStreaming === 'function') window.stopStreaming();
+
+    // Collect all marked answers across all questions
+    var all_answers = {};
+    for (var i = 1; i <= nos.length; i++) {
+        if (data[i] && data[i].marked) {
+            all_answers[nos[i-1]] = data[i].marked;
+        }
+    }
+
     $.ajax({
         type: "POST",
         dataType: "json",
         url: examUrl,
-        data: {flag: 'completed'},
-        success: function(data) {
+        data: {
+            flag: 'completed',
+            answers: JSON.stringify(all_answers)
+        },
+        success: function(resp) {
             if (window.SecureExam) window.SecureExam.end();
-            window.location.replace('/student_index');
+            if (resp && resp.redirect_url) {
+                window.location.replace(resp.redirect_url);
+            } else {
+                window.location.replace('/student_index');
+            }
         },
         error: function(error) {
             console.error("Finish test failed:", error);
@@ -253,6 +269,7 @@ $('#options').on('click', 'td', function(){
             data[curr+1].status = MARKED;
         }
         data[curr+1].marked = $(this).attr('id');
+        save_current_answer(false);
     }
     else {
         $(this).css("background-color",'rgba(0, 0, 0, 0)');
@@ -270,10 +287,8 @@ $('#finish').on("click", function(e) {
 var marked = function() {
     var count = 0;
     for(var i=1;i<=nos.length;i++){
-        if(data[i].status == SUBMITTED || data[i].status == SUBMITTED_BOOKMARKED){
+        if(data[i] && data[i].marked){
             count++;
-            $('#question-list').empty();
-            ques_grid();
         } 
     }
     return count;
@@ -303,6 +318,7 @@ var ques_grid = function() {
         $('#question-list').append('<div class="col-sm-2"><button class="btn btn-primary" style="background-color:' + color + '; color:white;"><div class="question" style="background-color:' + color + '; color:white;">' + j + '</div></div></div>');
     }
     $('.question').click(function() {
+        save_current_answer(false);
         var id = parseInt($(this).text());
         curr = id-1;
         display_ques(curr+1);

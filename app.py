@@ -153,6 +153,7 @@ def _ensure_exam_results_table():
 				correct_answers INT NOT NULL DEFAULT 0,
 				wrong_answers INT NOT NULL DEFAULT 0,
 				marks DECIMAL(10,2) NOT NULL DEFAULT 0,
+				total_marks DECIMAL(10,2) NOT NULL DEFAULT 0,
 				percentage DECIMAL(6,2) NOT NULL DEFAULT 0,
 				result_status VARCHAR(10) NOT NULL,
 				submission_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -165,9 +166,18 @@ def _ensure_exam_results_table():
 				KEY idx_exam_results_student (student_id, student_email)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 		""")
+		# Add total_marks column if missing on existing table
+		cur.execute("""
+			SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'exam_results' AND COLUMN_NAME = 'total_marks'
+		""")
+		check_row = cur.fetchone() or {}
+		if int(check_row.get('cnt') or 0) == 0:
+			cur.execute("ALTER TABLE exam_results ADD COLUMN total_marks DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER marks")
+
 		mysql.connection.commit()
 		_exam_results_table_checked = True
-		app.logger.info('exam_results table verified')
+		app.logger.info('exam_results table verified (with total_marks column)')
 	except Exception as err:
 		mysql.connection.rollback()
 		app.logger.exception('Failed to verify exam_results table: %s', err)
@@ -214,6 +224,13 @@ def _get_cheating_risk(cur, email, testid):
 
 
 def _fetch_result_context(cur, email, testid, student_uid):
+	student_name_fallback = email
+	try:
+		if session and 'name' in session:
+			student_name_fallback = session['name']
+	except Exception:
+		pass
+
 	cur.execute("""
 		SELECT t.test_id, t.test_type, t.subject, t.topic, t.uid AS professor_id,
 		       COALESCE(p.name, t.email) AS professor_name,
@@ -225,7 +242,7 @@ def _fetch_result_context(cur, email, testid, student_uid):
 		LEFT JOIN users s ON s.email = %s AND s.user_type = 'student'
 		WHERE t.test_id = %s
 		LIMIT 1
-	""", (student_uid, session.get('name', email), email, email, testid))
+	""", (student_uid, student_name_fallback, email, email, testid))
 	ctx = cur.fetchone()
 	if not ctx:
 		raise ValueError(f'Missing exam: {testid}')
@@ -238,56 +255,65 @@ def _calculate_result_payload(cur, email, testid, student_uid):
 	if test_type == 'objective':
 		cur.execute("""
 			SELECT COUNT(*) AS total_questions, COALESCE(SUM(marks), 0) AS total_marks
-			FROM questions WHERE test_id = %s AND uid = %s
-		""", (testid, ctx['professor_id']))
+			FROM questions WHERE test_id = %s
+		""", (testid,))
 		totals = cur.fetchone() or {}
 		cur.execute("""
 			SELECT COUNT(DISTINCT qid) AS attempted_questions
 			FROM students
-			WHERE test_id = %s AND email = %s AND uid = %s AND ans IS NOT NULL AND ans != ''
+			WHERE test_id = %s AND email = %s AND (uid = %s OR uid IS NULL OR uid = 0)
+			  AND ans IS NOT NULL AND TRIM(ans) != '' AND ans != '0'
 		""", (testid, email, student_uid))
 		attempted = cur.fetchone() or {}
 		cur.execute("""
 			SELECT q.qid, q.ans AS correct, q.marks, MAX(s.ans) AS marked
 			FROM questions q
-			LEFT JOIN students s ON s.test_id = q.test_id AND s.qid = q.qid
-				AND s.email = %s AND s.uid = %s
-			WHERE q.test_id = %s AND q.uid = %s
+			LEFT JOIN students s ON s.test_id = q.test_id AND TRIM(CAST(s.qid AS CHAR)) = TRIM(CAST(q.qid AS CHAR))
+				AND s.email = %s AND (s.uid = %s OR s.uid IS NULL OR s.uid = 0)
+			WHERE q.test_id = %s
 			GROUP BY q.qid, q.ans, q.marks
-		""", (email, student_uid, testid, ctx['professor_id']))
+		""", (email, student_uid, testid))
 		rows = cur.fetchall() or []
 		cur.execute("SELECT neg_marks FROM teachers WHERE test_id = %s LIMIT 1", (testid,))
-		neg = float((cur.fetchone() or {}).get('neg_marks') or 0)
+		neg_row = cur.fetchone() or {}
+		neg = float(neg_row.get('neg_marks') or 0)
 		marks = 0.0
 		correct = 0
 		wrong = 0
 		for row in rows:
-			marked = str(row.get('marked') or '').upper()
-			if not marked:
+			marked = str(row.get('marked') or '').strip().upper()
+			correct_ans = str(row.get('correct') or '').strip().upper()
+			if not marked or marked == '0' or marked == 'NONE':
 				continue
-			if marked == str(row.get('correct') or '').upper():
+			q_marks = float(row.get('marks') or 0)
+			if marked == correct_ans:
 				correct += 1
-				marks += float(row.get('marks') or 0)
+				marks += q_marks
 			else:
 				wrong += 1
-				marks -= (neg / 100) * float(row.get('marks') or 0)
+				marks -= (neg / 100.0) * q_marks
 		total_questions = int(totals.get('total_questions') or 0)
 		total_marks = float(totals.get('total_marks') or 0)
+		if total_marks <= 0 and total_questions > 0:
+			total_marks = float(total_questions)
 		attempted_questions = int(attempted.get('attempted_questions') or 0)
 	else:
 		qa_table = 'longqa' if test_type == 'subjective' else 'practicalqa'
 		ans_table = 'longtest' if test_type == 'subjective' else 'practicaltest'
-		cur.execute(f"SELECT COUNT(*) AS total_questions, COALESCE(SUM(marks), 0) AS total_marks FROM {qa_table} WHERE test_id = %s AND uid = %s", (testid, ctx['professor_id']))
+		cur.execute(f"SELECT COUNT(*) AS total_questions, COALESCE(SUM(marks), 0) AS total_marks FROM {qa_table} WHERE test_id = %s", (testid,))
 		totals = cur.fetchone() or {}
-		cur.execute(f"SELECT COUNT(*) AS attempted_questions, COALESCE(SUM(marks), 0) AS marks FROM {ans_table} WHERE test_id = %s AND email = %s AND uid = %s", (testid, email, student_uid))
+		cur.execute(f"SELECT COUNT(*) AS attempted_questions, COALESCE(SUM(marks), 0) AS marks FROM {ans_table} WHERE test_id = %s AND email = %s AND (uid = %s OR uid IS NULL OR uid = 0)", (testid, email, student_uid))
 		scored = cur.fetchone() or {}
 		total_questions = int(totals.get('total_questions') or 0)
 		total_marks = float(totals.get('total_marks') or 0)
+		if total_marks <= 0 and total_questions > 0:
+			total_marks = float(total_questions)
 		attempted_questions = int(scored.get('attempted_questions') or 0)
 		marks = float(scored.get('marks') or 0)
 		correct = 0
 		wrong = 0
-	percentage = round((marks / total_marks) * 100, 2) if total_marks else 0
+
+	percentage = round((marks / total_marks) * 100.0, 2) if total_marks > 0 else 0.0
 	risk_score, risk_level = _get_cheating_risk(cur, email, testid)
 	return {
 		'student_id': int(ctx['student_id'] or student_uid),
@@ -303,6 +329,7 @@ def _calculate_result_payload(cur, email, testid, student_uid):
 		'correct_answers': correct,
 		'wrong_answers': wrong,
 		'marks': round(marks, 2),
+		'total_marks': round(total_marks, 2),
 		'percentage': percentage,
 		'result_status': 'Pass' if percentage >= RESULT_PASS_PERCENTAGE else 'Fail',
 		'cheating_risk_score': risk_score,
@@ -338,12 +365,12 @@ def save_exam_result(email, testid, student_uid):
 			INSERT INTO exam_results (
 				student_id, student_name, student_email, exam_id, subject, topic,
 				professor_id, professor_name, total_questions, attempted_questions,
-				correct_answers, wrong_answers, marks, percentage, result_status,
+				correct_answers, wrong_answers, marks, total_marks, percentage, result_status,
 				submission_time, cheating_risk_score, risk_level, uid
 			) VALUES (
 				%(student_id)s, %(student_name)s, %(student_email)s, %(exam_id)s, %(subject)s, %(topic)s,
 				%(professor_id)s, %(professor_name)s, %(total_questions)s, %(attempted_questions)s,
-				%(correct_answers)s, %(wrong_answers)s, %(marks)s, %(percentage)s, %(result_status)s,
+				%(correct_answers)s, %(wrong_answers)s, %(marks)s, %(total_marks)s, %(percentage)s, %(result_status)s,
 				NOW(), %(cheating_risk_score)s, %(risk_level)s, %(uid)s
 			)
 			ON DUPLICATE KEY UPDATE
@@ -357,6 +384,7 @@ def save_exam_result(email, testid, student_uid):
 				correct_answers = VALUES(correct_answers),
 				wrong_answers = VALUES(wrong_answers),
 				marks = VALUES(marks),
+				total_marks = VALUES(total_marks),
 				percentage = VALUES(percentage),
 				result_status = VALUES(result_status),
 				submission_time = NOW(),
@@ -364,7 +392,12 @@ def save_exam_result(email, testid, student_uid):
 				risk_level = VALUES(risk_level)
 		""", payload)
 		mysql.connection.commit()
-		app.logger.info('Result saved: student=%s exam=%s marks=%s pct=%s risk=%s', email, testid, payload['marks'], payload['percentage'], payload['risk_level'])
+		app.logger.info(
+			'Result saved successfully: exam_id=%s, student_id=%s, email=%s, attempted=%s/%s, correct=%s, wrong=%s, marks=%s, total_marks=%s, percentage=%s%%, risk_score=%s, risk_level=%s',
+			testid, payload['student_id'], email, payload['attempted_questions'], payload['total_questions'],
+			payload['correct_answers'], payload['wrong_answers'], payload['marks'], payload['total_marks'],
+			payload['percentage'], payload['cheating_risk_score'], payload['risk_level']
+		)
 		return payload
 	except Exception as err:
 		mysql.connection.rollback()
@@ -2548,18 +2581,24 @@ def test(testid):
 					cur.close()
 					return jsonify({'status': 'error', 'message': 'Missing qid or answer'}), 400
 				cur = mysql.connection.cursor()
-				results = cur.execute('SELECT sid from students where test_id = %s and qid = %s and email = %s and uid = %s', (testid, qid, session['email'], session['uid']))
-				if results > 0:
-					cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s and uid = %s', (ans, testid, qid, session['email'], session['uid']))
-					action = 'updated'
-				else:
-					cur.execute('INSERT INTO students(email,test_id,qid,ans,uid) values(%s,%s,%s,%s,%s)', (session['email'], testid, qid, ans, session['uid']))
-					action = 'inserted'
-				mysql.connection.commit()
-				rowcount = cur.rowcount
-				cur.close()
-				app.logger.info('Answer %s: uid=%s test=%s qid=%s ans=%s', action, session['uid'], testid, qid, ans)
-				return jsonify({'status': 'success', 'action': action, 'rows': rowcount})
+				try:
+					results = cur.execute('SELECT 1 from students where test_id = %s and qid = %s and email = %s and uid = %s', (testid, str(qid), session['email'], session['uid']))
+					if results > 0:
+						cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s and uid = %s', (ans, testid, str(qid), session['email'], session['uid']))
+						action = 'updated'
+					else:
+						cur.execute('INSERT INTO students(email,test_id,qid,ans,uid) values(%s,%s,%s,%s,%s)', (session['email'], testid, str(qid), ans, session['uid']))
+						action = 'inserted'
+					mysql.connection.commit()
+					rowcount = cur.rowcount
+					app.logger.info('Answer %s: uid=%s email=%s test=%s qid=%s ans=%s', action, session['uid'], session['email'], testid, qid, ans)
+					return jsonify({'status': 'success', 'action': action, 'rows': rowcount})
+				except Exception as e:
+					mysql.connection.rollback()
+					app.logger.exception('Answer save error: uid=%s test=%s qid=%s ans=%s: %s', session.get('uid'), testid, qid, ans, e)
+					return jsonify({'status': 'error', 'message': f'Failed to save answer: {e}'}), 500
+				finally:
+					cur.close()
 			elif flag=='time':
 				cur = mysql.connection.cursor()
 				time_left = request.form['time']
@@ -2573,19 +2612,45 @@ def test(testid):
 			else:
 				cur = mysql.connection.cursor()
 				try:
+					# Process any batch answers submitted with completion
+					submitted_answers_raw = request.form.get('answers')
+					if submitted_answers_raw:
+						try:
+							submitted_answers = json.loads(submitted_answers_raw)
+							if isinstance(submitted_answers, dict):
+								for qid_key, ans_val in submitted_answers.items():
+									if ans_val and str(ans_val).strip():
+										exists = cur.execute('SELECT 1 FROM students WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s', (testid, str(qid_key), session['email'], session['uid']))
+										if exists > 0:
+											cur.execute('UPDATE students SET ans = %s WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s', (str(ans_val), testid, str(qid_key), session['email'], session['uid']))
+										else:
+											cur.execute('INSERT INTO students (email, test_id, qid, ans, uid) VALUES (%s, %s, %s, %s, %s)', (session['email'], testid, str(qid_key), str(ans_val), session['uid']))
+								mysql.connection.commit()
+								app.logger.info('Batch answers saved for uid=%s email=%s test=%s count=%s', session['uid'], session['email'], testid, len(submitted_answers))
+						except Exception as batch_err:
+							app.logger.warning('Failed to process batch submitted answers: %s', batch_err)
+
 					cur.execute('UPDATE studentTestInfo set completed=1,time_left=sec_to_time(0) where test_id = %s and email = %s and uid = %s', (testid, session['email'],session['uid']))
 					mysql.connection.commit()
 					rows = cur.rowcount
 				finally:
 					cur.close()
+
 				try:
 					result_payload = save_exam_result(session['email'], testid, session['uid'])
 				except Exception as err:
-					return jsonify({'status': 'error', 'message': f'Result insert failed: {err}'}), 500
+					app.logger.exception('Exam submission result calculation failed: uid=%s email=%s test=%s: %s', session.get('uid'), session.get('email'), testid, err)
+					return jsonify({'status': 'error', 'message': f'Result calculation/storage failed: {err}'}), 500
+
 				_complete_secure_exam_session(testid)
-				app.logger.info('Exam completed: uid=%s email=%s test=%s rows=%s', session['uid'], session['email'], testid, rows)
+				app.logger.info(
+					'Exam completed: uid=%s email=%s test=%s marks=%s/%s percentage=%s%% rows=%s',
+					session['uid'], session['email'], testid,
+					result_payload.get('marks'), result_payload.get('total_marks'), result_payload.get('percentage'), rows
+				)
 				flash("Exam submitted successfully", 'info')
-				return jsonify({'status':'success', 'completed': True, 'rows': rows, 'result': result_payload})
+				redirect_url = url_for('tests_given', email=session['email'])
+				return jsonify({'status':'success', 'completed': True, 'rows': rows, 'result': result_payload, 'redirect_url': redirect_url})
 
 	elif callresults['test_type'] == "subjective":
 		if request.method == 'GET':
@@ -2810,9 +2875,9 @@ def tests_given(email):
 		cur = mysql.connection.cursor()
 		cur.execute('''
 			SELECT * FROM exam_results
-			WHERE student_email = %s AND uid = %s
+			WHERE student_email = %s AND (uid = %s OR student_id = %s)
 			ORDER BY submission_time DESC
-		''', (session['email'], session['uid']))
+		''', (session['email'], session['uid'], session['uid']))
 		results = cur.fetchall() or []
 		cur.close()
 		return render_template('tests_given.html', results=results, cresults=results)
@@ -2830,9 +2895,9 @@ def api_student_results():
 		cur = mysql.connection.cursor()
 		cur.execute('''
 			SELECT * FROM exam_results
-			WHERE student_email = %s AND uid = %s
+			WHERE student_email = %s AND (uid = %s OR student_id = %s)
 			ORDER BY submission_time DESC
-		''', (session['email'], session['uid']))
+		''', (session['email'], session['uid'], session['uid']))
 		rows = cur.fetchall() or []
 		cur.close()
 		return jsonify({'status': 'success', 'results': _json_safe_rows(rows)})
