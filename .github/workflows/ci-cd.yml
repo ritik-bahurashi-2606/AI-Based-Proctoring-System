@@ -44,7 +44,7 @@ jobs:
           if [ -d tests ]; then
             python -m pip install pytest
             mkdir -p test-results
-            pytest tests/ --junitxml=test-results/pytest.xml
+            PYTHONPATH="${{ github.workspace }}:${PYTHONPATH}" python -m pytest tests/ --junitxml=test-results/pytest.xml
           else
             echo "No tests directory found, skipping."
           fi
