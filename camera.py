@@ -24,17 +24,31 @@ _SMOOTHING_ALPHA   = 0.18   # EMA smoothing factor (lower = smoother)
 _EAR_BLINK_THRESH  = 0.18   # eye aspect ratio below → blink, skip gaze
 
 # ── Optional gaze tracker ─────────────────────────────────────────────────────
-try:
-    from gaze_tracking import GazeTracking
-    gaze_tracker   = GazeTracking()
-    GAZE_AVAILABLE = True
-    print("Gaze tracking initialized successfully")
-except ImportError as e:
-    print(f"Gaze tracking not available: {e}")
-    GAZE_AVAILABLE = False
-    gaze_tracker   = None
+# Gaze tracking requires a valid dlib landmark model and is optional.
+# Disable it in CI environments or headless testing by setting PROCTOR_DISABLE_GAZE=1
+_DISABLE_GAZE = os.getenv("PROCTOR_DISABLE_GAZE", "").lower() in {
+    "1", "true", "yes", "on"
+}
 
-# ── YOLO model ────────────────────────────────────────────────────────────────
+if _DISABLE_GAZE:
+    GAZE_AVAILABLE = False
+    gaze_tracker = None
+    print("Gaze tracking disabled by PROCTOR_DISABLE_GAZE")
+else:
+    try:
+        from gaze_tracking import GazeTracking
+        gaze_tracker   = GazeTracking()
+        GAZE_AVAILABLE = True
+        print("Gaze tracking initialized successfully")
+    except Exception as exc:
+        # A missing, corrupt, or incompatible dlib model must not prevent
+        # the rest of the application from starting. However, this indicates
+        # a deployment issue that should be investigated.
+        print(f"Gaze tracking not available: {exc}")
+        GAZE_AVAILABLE = False
+        gaze_tracker   = None
+
+# ── YOLO model ──────────────────────────────────────────────────────────
 import wget
 
 try:
