@@ -4,9 +4,9 @@
   <h3 class="h3 mb-4 text-center">Student Results</h3>
   <div class="table-responsive">
     <table class="table table-centered table-nowrap mb-0 rounded">
-      <thead class="thead-light"><tr><th>Exam ID</th><th>Student ID</th><th>Name</th><th>Email</th><th>Subject</th><th>Topic</th><th>Marks</th><th>Percentage</th><th>Pass/Fail</th><th>Submission Time</th><th>Risk Score</th><th>Risk Level</th></tr></thead>
+      <thead class="thead-light"><tr><th>Exam ID</th><th>Student ID</th><th>Name</th><th>Email</th><th>Subject</th><th>Topic</th><th>Obtained Marks</th><th>Total Marks</th><th>Percentage</th><th>Submission Time</th><th>Risk Score</th><th>Risk Level</th></tr></thead>
       <tbody>
-        {% for r in results %}<tr><td>{{ r['exam_id'] }}</td><td>{{ r['student_id'] }}</td><td>{{ r['student_name'] }}</td><td>{{ r['student_email'] }}</td><td>{{ r['subject'] }}</td><td>{{ r['topic'] }}</td><td>{{ r['marks'] }}</td><td>{{ r['percentage'] }}%</td><td>{{ r['result_status'] }}</td><td>{{ r['submission_time'] }}</td><td>{{ r['cheating_risk_score'] }}</td><td>{{ r['risk_level'] }}</td></tr>{% endfor %}
+        {% for r in results %}<tr><td>{{ r['exam_id'] }}</td><td>{{ r['student_id'] }}</td><td>{{ r['student_name'] }}</td><td>{{ r['student_email'] }}</td><td>{{ r['subject'] }}</td><td>{{ r['topic'] }}</td><td>{{ r['marks'] }}</td><td>{{ r['total_marks'] if (r['total_marks'] is defined and r['total_marks']|float > 0) else r['total_questions'] }}</td><td>{{ '%g'|format(r['percentage']|float) }}%</td><td>{{ r['submission_time'] }}</td><td>{{ r['cheating_risk_score'] }}</td><td>{{ r['risk_level'] }}</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
