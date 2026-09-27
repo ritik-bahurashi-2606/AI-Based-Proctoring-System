@@ -1,8 +1,25 @@
 {% extends 'student_dashboard.html' %}
 {% block body %}
+<style>
+  .result-page-header { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; margin-bottom:22px; }
+  .result-page-header h3 { margin:0; color:#0f172a; font-weight:700; }
+  .result-page-header p { margin:5px 0 0; color:#64748b; font-size:14px; }
+  .result-summary { display:flex; gap:32px; margin-bottom:18px; padding:0 0 18px; border-bottom:1px solid #dce3ec; }
+  .result-summary span { display:block; color:#64748b; font-size:12px; letter-spacing:.5px; text-transform:uppercase; }
+  .result-summary strong { color:#0f172a; font-size:21px; }
+  .result-table-shell { border:1px solid #cbd5e1; border-radius:8px; background:#fff; overflow:hidden; box-shadow:0 5px 14px rgba(15,23,42,.08); }
+  .result-table-shell table { margin:0; min-width:940px; }
+  .result-table-shell thead th { background:#0f172a; border:0; color:#e0f2fe; font-size:12px; letter-spacing:.35px; padding:13px 14px; text-transform:uppercase; white-space:nowrap; }
+  .result-table-shell tbody td { border-top:1px solid #e8edf3; color:#334155; padding:14px; vertical-align:middle; white-space:nowrap; }
+  .result-table-shell tbody tr:hover { background:#f0f9ff; }
+  .result-score { color:#0f172a; font-weight:700; } .result-percentage { color:#0284c7; font-weight:700; }
+  .risk-badge { border-radius:4px; display:inline-block; font-size:12px; font-weight:700; padding:3px 8px; }
+  .risk-safe { background:#dcfce7; color:#166534; } .risk-moderate { background:#fef3c7; color:#92400e; } .risk-high { background:#fee2e2; color:#991b1b; }
+</style>
 <div class="container-fluid">
-  <h3 class="h3 mb-4 text-center">My Results</h3>
-  <div class="table-responsive">
+  <div class="result-page-header"><div><h3>My Results</h3><p>Completed exams and their persisted scores.</p></div></div>
+  <div class="result-summary"><div><span>Completed Exams</span><strong id="resultCount">{{ results|length }}</strong></div><div><span>Average Percentage</span><strong id="averagePercentage">0%</strong></div></div>
+  <div class="result-table-shell table-responsive">
     <table class="table table-centered table-nowrap mb-0 rounded" id="studentResultsTable">
       <thead class="thead-light">
         <tr>
@@ -23,12 +40,12 @@
           <td><a href="/{{ session['email'] }}/{{ result['exam_id'] }}">{{ result['exam_id'] }}</a></td>
           <td>{{ result['subject'] }}</td>
           <td>{{ result['topic'] }}</td>
-          <td>{{ result['marks'] }}</td>
+          <td class="result-score">{{ result['marks'] }}</td>
           <td>{{ result['total_marks'] if (result['total_marks'] is defined and result['total_marks'] > 0) else (result['total_questions'] if (result['total_questions'] is defined and result['total_questions'] > 0) else 0) }}</td>
-          <td>{{ '%.2f'|format(result['percentage']|float) if result['percentage'] is not none else '0.00' }}%</td>
+          <td class="result-percentage">{{ '%.2f'|format(result['percentage']|float) if result['percentage'] is not none else '0.00' }}%</td>
           <td>{{ result['submission_time'] }}</td>
           <td>{{ result['cheating_risk_score'] }}</td>
-          <td>{{ result['risk_level'] }}</td>
+          <td><span class="risk-badge {% if result['risk_level'] == 'High Risk' %}risk-high{% elif result['risk_level'] == 'Moderate' %}risk-moderate{% else %}risk-safe{% endif %}">{{ result['risk_level'] }}</span></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -40,6 +57,9 @@
 function renderStudentResults(rows) {
   const tbody = document.querySelector('#studentResultsTable tbody');
   if (!tbody) return;
+  document.getElementById('resultCount').textContent = rows.length;
+  const average = rows.length ? rows.reduce((sum, r) => sum + Number(r.percentage || 0), 0) / rows.length : 0;
+  document.getElementById('averagePercentage').textContent = Number(average.toFixed(2)) + '%';
   tbody.innerHTML = rows.map(r => {
     const totalMarks = (r.total_marks !== undefined && r.total_marks !== null && Number(r.total_marks) > 0) 
       ? r.total_marks 
@@ -51,12 +71,12 @@ function renderStudentResults(rows) {
       <td><a href="/{{ session.get('email', '') }}/${r.exam_id}">${r.exam_id}</a></td>
       <td>${r.subject || ''}</td>
       <td>${r.topic || ''}</td>
-      <td>${r.marks !== undefined ? r.marks : 0}</td>
+      <td class="result-score">${r.marks !== undefined ? r.marks : 0}</td>
       <td>${totalMarks}</td>
-      <td>${pct}%</td>
+      <td class="result-percentage">${pct}%</td>
       <td>${r.submission_time || ''}</td>
       <td>${r.cheating_risk_score !== undefined ? r.cheating_risk_score : 0}</td>
-      <td>${r.risk_level || 'Safe'}</td>
+      <td><span class="risk-badge ${r.risk_level === 'High Risk' ? 'risk-high' : r.risk_level === 'Moderate' ? 'risk-moderate' : 'risk-safe'}">${r.risk_level || 'Safe'}</span></td>
     </tr>`;
   }).join('');
 }

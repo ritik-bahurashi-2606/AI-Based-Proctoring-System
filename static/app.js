@@ -4,6 +4,7 @@ var data = {};
 var examUrl = window.location.pathname;
 var timerInterval = null;
 var timeSyncInterval = null;
+var submissionInProgress = false;
 const NOT_MARKED=0;
 const MARKED=1;
 const BOOKMARKED=2;
@@ -108,6 +109,8 @@ function startTimer(duration, display) {
 }
 
 function finish_test() {
+    if (submissionInProgress) return;
+    submissionInProgress = true;
     save_current_answer(false);
     $('#msg').addClass('alert-info');
     $('#msg').append("Test submitted successfully");
@@ -133,6 +136,17 @@ function finish_test() {
             answers: JSON.stringify(all_answers)
         },
         success: function(resp) {
+            if (!resp || resp.status !== 'success') {
+                submissionInProgress = false;
+                var message = (resp && resp.message) || 'The exam could not be submitted. Please try again.';
+                console.error('Finish test failed:', message);
+                if (window.Swal) {
+                    Swal.fire('Submit failed', message, 'error');
+                } else {
+                    alert(message);
+                }
+                return;
+            }
             if (window.SecureExam) window.SecureExam.end();
             if (resp && resp.redirect_url) {
                 window.location.replace(resp.redirect_url);
@@ -141,9 +155,15 @@ function finish_test() {
             }
         },
         error: function(error) {
+            submissionInProgress = false;
             console.error("Finish test failed:", error);
+            var message = error.responseJSON && error.responseJSON.message
+                ? error.responseJSON.message
+                : 'Please check your connection and try again.';
             if (window.Swal) {
-                Swal.fire('Submit failed', 'Please check your connection and try again.', 'error');
+                Swal.fire('Submit failed', message, 'error');
+            } else {
+                alert(message);
             }
         }
     });    

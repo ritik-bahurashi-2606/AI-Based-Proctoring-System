@@ -1,5 +1,5 @@
 /**
- * proctoring_common.js  —  MyProctor.ai
+ * proctoring_common.js  —  SafeExam
  * Smart real-time proctoring: warnings, audio recording, smart response handling.
  */
 (function () {

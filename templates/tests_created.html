@@ -1,14 +1,23 @@
 {% extends 'professor_dashboard.html' %}
 {% block body %}
+<style>
+  .result-page-header { margin-bottom:20px; } .result-page-header h3 { color:#1a1d23; font-weight:700; margin:0; } .result-page-header p { color:#64748b; font-size:14px; margin:5px 0 0; }
+  .result-filter-bar { border-bottom:1px solid #dce3ec; margin-bottom:18px; padding-bottom:18px; }
+  .result-table-shell { background:#fff; border:1px solid #d8dbe0; border-radius:8px; box-shadow:0 5px 14px rgba(26,29,35,.08); overflow:hidden; } .result-table-shell table { margin:0; min-width:1180px; }
+  .result-table-shell thead th { background:#1a1d23; border:0; color:#fff7ed; font-size:12px; letter-spacing:.35px; padding:13px 14px; text-transform:uppercase; white-space:nowrap; }
+  .result-table-shell tbody td { border-top:1px solid #e8edf3; color:#334155; padding:14px; vertical-align:middle; white-space:nowrap; } .result-table-shell tbody tr:hover { background:#fff7ed; }
+  .result-score { color:#1a1d23; font-weight:700; } .result-percentage { color:#cf4f18; font-weight:700; }
+  .risk-badge { border-radius:4px; display:inline-block; font-size:12px; font-weight:700; padding:3px 8px; } .risk-safe { background:#dcfce7; color:#166534; } .risk-moderate { background:#fef3c7; color:#92400e; } .risk-high { background:#fee2e2; color:#991b1b; }
+</style>
 <div class="container-fluid">
-  <h3 class="h3 mb-4 text-center">Student Results</h3>
-  <div class="row mb-3">
+  <div class="result-page-header"><h3>Student Results</h3><p>Persisted exam scores, submission times, and proctoring risk details.</p></div>
+  <div class="row mb-3 result-filter-bar">
     <div class="col-md-4 mb-2"><input id="resultSearch" class="form-control" placeholder="Search exam, student, email, subject, topic"></div>
     <div class="col-md-2 mb-2"><input id="resultDate" type="date" class="form-control"></div>
     <div class="col-md-2 mb-2"><select id="riskFilter" class="form-control"><option value="">All Risks</option><option>Safe</option><option>Moderate</option><option>High Risk</option></select></div>
     <div class="col-md-4 mb-2"><select id="sortBy" class="form-control"><option value="submission_time">Submission Time</option><option value="marks">Marks</option></select></div>
   </div>
-  <div class="table-responsive">
+  <div class="result-table-shell table-responsive">
     <table class="table table-centered table-nowrap mb-0 rounded" id="profResultsTable">
       <thead class="thead-light">
         <tr>
@@ -35,12 +44,12 @@
           <td>{{ test['exam_id'] }}</td>
           <td>{{ test['subject'] }}</td>
           <td>{{ test['topic'] }}</td>
-          <td>{{ test['marks'] }}</td>
+          <td class="result-score">{{ test['marks'] }}</td>
           <td>{{ test['total_marks'] if (test['total_marks'] is defined and test['total_marks'] > 0) else (test['total_questions'] if (test['total_questions'] is defined and test['total_questions'] > 0) else 0) }}</td>
-          <td>{{ '%.2f'|format(test['percentage']|float) if test['percentage'] is not none else '0.00' }}%</td>
+          <td class="result-percentage">{{ '%.2f'|format(test['percentage']|float) if test['percentage'] is not none else '0.00' }}%</td>
           <td>{{ test['submission_time'] }}</td>
           <td>{{ test['cheating_risk_score'] }}</td>
-          <td>{{ test['risk_level'] }}</td>
+          <td><span class="risk-badge {% if test['risk_level'] == 'High Risk' %}risk-high{% elif test['risk_level'] == 'Moderate' %}risk-moderate{% else %}risk-safe{% endif %}">{{ test['risk_level'] }}</span></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -68,12 +77,12 @@ function renderProfessorResults(rows) {
       <td>${r.exam_id || ''}</td>
       <td>${r.subject || ''}</td>
       <td>${r.topic || ''}</td>
-      <td>${r.marks !== undefined ? r.marks : 0}</td>
+      <td class="result-score">${r.marks !== undefined ? r.marks : 0}</td>
       <td>${totalMarks}</td>
-      <td>${pct}%</td>
+      <td class="result-percentage">${pct}%</td>
       <td>${r.submission_time || ''}</td>
       <td>${r.cheating_risk_score !== undefined ? r.cheating_risk_score : 0}</td>
-      <td>${r.risk_level || 'Safe'}</td>
+      <td><span class="risk-badge ${r.risk_level === 'High Risk' ? 'risk-high' : r.risk_level === 'Moderate' ? 'risk-moderate' : 'risk-safe'}">${r.risk_level || 'Safe'}</span></td>
     </tr>`;
   }).join('');
 }
