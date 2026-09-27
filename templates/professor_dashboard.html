@@ -79,6 +79,15 @@
       letter-spacing: 0.5px;
     }
 
+    .sidebar-logo .brand-logo {
+      width: 38px;
+      height: 38px;
+      object-fit: contain;
+      border-radius: 50%;
+      background: #fff;
+      padding: 2px;
+    }
+
     .sidebar .nav-item {
       margin-bottom: 2px;
     }
@@ -271,7 +280,7 @@
     <div class="sidebar-inner">
 
       <div class="sidebar-logo">
-        <i class="fas fa-robot text-warning fa-lg"></i>
+        <img class="brand-logo" src="{{ url_for('static', filename='assets/img/brand/spit-seal.png') }}" alt="Sardar Patel Institute of Technology">
         <span>SafeExam</span>
       </div>
 

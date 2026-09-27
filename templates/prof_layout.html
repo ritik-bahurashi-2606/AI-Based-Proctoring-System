@@ -25,7 +25,11 @@
             color: white;
             border-bottom: 1px solid #333;
             margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
+        .sidebar .brand-logo { width: 30px; height: 30px; object-fit: contain; border-radius: 50%; background: #fff; padding: 2px; }
         .sidebar a {
             color: #ccc;
             text-decoration: none;
@@ -83,7 +87,7 @@
 </head>
 <body>
 <div class="sidebar">
-    <div class="brand">SafeExam</div>
+    <div class="brand"><img class="brand-logo" src="{{ url_for('static', filename='assets/img/brand/spit-seal.png') }}" alt="Sardar Patel Institute of Technology">SafeExam</div>
 
     <!-- Create Exam Dropdown -->
     <div class="dropdown-toggle-custom" onclick="toggleMenu('createExamMenu')">

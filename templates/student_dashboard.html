@@ -36,6 +36,7 @@
             gap: 10px;
         }
         .sidebar .brand span { color: #38bdf8; }
+        .sidebar .brand-logo { width: 30px; height: 30px; object-fit: contain; border-radius: 50%; background: #fff; padding: 2px; }
 
         .sidebar .user-info {
             padding: 14px 20px;
@@ -153,8 +154,8 @@
 <!-- ── Sidebar ── -->
 <div class="sidebar">
     <div class="brand">
-        <i class="fas fa-eye" style="color:#38bdf8"></i>
-        SafeExam<span>.ai</span>
+        <img class="brand-logo" src="{{ url_for('static', filename='assets/img/brand/spit-seal.png') }}" alt="Sardar Patel Institute of Technology">
+        <span>SafeExam</span>
     </div>
 
     <div class="user-info">
