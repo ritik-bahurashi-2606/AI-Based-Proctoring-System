@@ -215,7 +215,7 @@ def _get_cheating_risk(cur, email, testid):
 	score = (
 		int(proctor.get('phone_flags') or 0) * 10
 		+ int(proctor.get('person_flags') or 0) * 5
-		+ int(tab.get('tab_switches') or 0) * 3
+		+ int(tab.get('tab_switches') or 0) * 7
 		+ int(proctor.get('head_flags_lr') or 0)
 		+ int(proctor.get('head_flags_ud') or 0)
 		+ int(proctor.get('eye_flags') or 0)
@@ -260,7 +260,7 @@ def _save_submitted_answers(cur, email, testid, student_uid, submitted_answers):
 		if not qid_value or not answer_value:
 			continue
 		exists = cur.execute(
-			'SELECT sid FROM students WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s LIMIT 1',
+			'SELECT 1 FROM students WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s LIMIT 1',
 			(testid, qid_value, email, student_uid),
 		)
 		if exists > 0:
@@ -3385,7 +3385,7 @@ def cheat_report():
             tab_info      = tab_rows.get(email, {})
             tab_sw        = int(tab_info.get('tab_switches', 0) or 0)
 
-            risk_score = phone_f * 10 + person_f * 5 + tab_sw * 3 + head_f + eye_f
+            risk_score = phone_f * 10 + person_f * 5 + tab_sw * 7 + head_f + eye_f
 
             if risk_score >= 30:
                 risk_level = 'High Risk'
