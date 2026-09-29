@@ -194,6 +194,15 @@ def _risk_level(score):
 	return 'Safe'
 
 
+def _process_webcam_frame(image_data):
+	if not image_data:
+		raise ValueError('Missing webcam frame')
+	frame = camera.get_frame(image_data)
+	if not isinstance(frame, dict):
+		raise ValueError('Camera processor returned an invalid frame')
+	return frame
+
+
 def _get_cheating_risk(cur, email, testid):
 	cur.execute("""
 		SELECT
@@ -275,6 +284,41 @@ def _save_submitted_answers(cur, email, testid, student_uid, submitted_answers):
 			)
 		saved_count += 1
 	return saved_count
+
+
+def _upsert_exam_response(cur, table, email, testid, qid, answer, student_uid, extra_fields=None):
+	if table not in {'longtest', 'practicaltest'}:
+		raise ValueError(f'Unsupported response table: {table}')
+	answer_value = str(answer or '').strip()
+	qid_value = str(qid).strip()
+	exists = cur.execute(
+		f'SELECT 1 FROM {table} WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s LIMIT 1',
+		(testid, qid_value, email, student_uid),
+	)
+	if table == 'longtest':
+		if exists:
+			cur.execute(
+				'UPDATE longtest SET ans = %s WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s',
+				(answer_value, testid, qid_value, email, student_uid),
+			)
+		else:
+			cur.execute(
+				'INSERT INTO longtest(email, test_id, qid, ans, uid) VALUES(%s, %s, %s, %s, %s)',
+				(email, testid, qid_value, answer_value, student_uid),
+			)
+		return
+
+	fields = extra_fields or {}
+	if exists:
+		cur.execute(
+			'UPDATE practicaltest SET code = %s, input = %s, executed = %s WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s',
+			(fields.get('code', ''), fields.get('input', ''), fields.get('executed', ''), testid, qid_value, email, student_uid),
+		)
+	else:
+		cur.execute(
+			'INSERT INTO practicaltest(email, test_id, qid, code, input, executed, uid) VALUES(%s, %s, %s, %s, %s, %s, %s)',
+			(email, testid, qid_value, fields.get('code', ''), fields.get('input', ''), fields.get('executed', ''), student_uid),
+		)
 
 
 def _score_objective_answers(question_rows, answers, negative_percentage):
@@ -723,7 +767,7 @@ def video_feed():
 
 		# ── Run CV pipeline ───────────────────────────────────────────────────
 		try:
-			proctorData = camera.get_frame(imgData)
+			proctorData = _process_webcam_frame(imgData)
 		except Exception as cam_err:
 			app.logger.error('camera.get_frame error: %s', cam_err)
 			return jsonify({'status': 'error', 'message': 'Camera processing failed.'}), 500
@@ -2684,7 +2728,7 @@ def test(testid):
 				redirect_url = url_for('tests_given', email=session['email'])
 				return jsonify({'status':'success', 'completed': True, 'rows': rows, 'result': result_payload, 'redirect_url': redirect_url})
 
-	elif callresults['test_type'] == "subjective":
+	elif exam_row['test_type'] == "subjective":
 		if request.method == 'GET':
 			cur = mysql.connection.cursor()
 			cur.execute('SELECT test_id, qid, q, marks from longqa where test_id = %s ORDER BY RAND()',[testid])
@@ -2713,42 +2757,33 @@ def test(testid):
 				return render_template("testsubjective.html", callresults = callresults1, subject = subject, duration = duration, test_id = test_id, topic = topic )
 		elif request.method == 'POST':
 			cur = mysql.connection.cursor()
-			test_id = request.form["test_id"]
-			cur = mysql.connection.cursor()
-			results1 = cur.execute('SELECT COUNT(qid) from longqa where test_id = %s',[testid])
-			results1 = cur.fetchone()
-			cur.close()
-			insertStudentData = None
-			for sa in range(1,results1['COUNT(qid)']+1):
-				answerByStudent = request.form[str(sa)]
-				cur = mysql.connection.cursor()
-				insertStudentData = cur.execute('INSERT INTO longtest(email,test_id,qid,ans,uid) values(%s,%s,%s,%s,%s)', (session['email'], testid, sa, answerByStudent, session['uid']))
+			try:
+				test_id = request.form.get('test_id', testid)
+				cur.execute('SELECT qid FROM longqa WHERE test_id = %s ORDER BY qid', (testid,))
+				question_rows = cur.fetchall() or []
+				for question in question_rows:
+					qid = question['qid']
+					_upsert_exam_response(cur, 'longtest', session['email'], testid, qid, request.form.get(str(qid), ''), session['uid'])
+				cur.execute('UPDATE studentTestInfo SET completed = 1, time_left = SEC_TO_TIME(0) WHERE test_id = %s AND email = %s AND uid = %s', (test_id, session['email'], session['uid']))
 				mysql.connection.commit()
-			else:
-				if insertStudentData > 0:
-					insertStudentTestInfoData = cur.execute('UPDATE studentTestInfo set completed = 1 where test_id = %s and email = %s and uid = %s', (test_id, session['email'], session['uid']))
-					mysql.connection.commit()
-					cur.close()
-					if insertStudentTestInfoData > 0:
-						try:
-							save_exam_result(session['email'], testid, session['uid'])
-						except Exception as err:
-							app.logger.exception('Subjective result save failed: exam_id=%s student_id=%s', testid, session.get('uid'))
-							flash('Result calculation failed. Please contact your instructor.', 'danger')
-							return redirect(url_for('student_index'))
-						_complete_secure_exam_session(testid)
-						flash('Successfully Exam Submitted', 'success')
-						return redirect(url_for('tests_given', email=session['email']))
-					else:
-						cur.close()
-						flash('Some Error was occured!', 'error')
-						return redirect(url_for('student_index'))	
-				else:
-					cur.close()
-					flash('Some Error was occured!', 'error')
-					return redirect(url_for('student_index'))
+			except Exception:
+				mysql.connection.rollback()
+				app.logger.exception('Subjective answer save failed: exam_id=%s student_id=%s', testid, session.get('uid'))
+				flash('Could not save your answers. Please try again.', 'danger')
+				return redirect(url_for('student_index'))
+			finally:
+				cur.close()
+			try:
+				save_exam_result(session['email'], testid, session['uid'])
+			except Exception:
+				app.logger.exception('Subjective result save failed: exam_id=%s student_id=%s', testid, session.get('uid'))
+				flash('Result calculation failed. Please contact your instructor.', 'danger')
+				return redirect(url_for('student_index'))
+			_complete_secure_exam_session(testid)
+			flash('Successfully Exam Submitted', 'success')
+			return redirect(url_for('tests_given', email=session['email']))
 
-	elif callresults['test_type'] == "practical":
+	elif exam_row['test_type'] == "practical":
 		if request.method == 'GET':
 			cur = mysql.connection.cursor()
 			cur.execute('SELECT test_id, qid, q, marks, compiler from practicalqa where test_id = %s ORDER BY RAND()',[testid])
@@ -2777,34 +2812,30 @@ def test(testid):
 				return render_template("testpractical.html", callresults = callresults1, subject = subject, duration = duration, test_id = test_id, topic = topic )
 		elif request.method == 'POST':
 			test_id = request.form["test_id"]
-			codeByStudent = request.form["codeByStudent"]
-			inputByStudent = request.form["inputByStudent"]
-			executedByStudent = request.form["executedByStudent"]
 			cur = mysql.connection.cursor()
-			insertStudentData = cur.execute('INSERT INTO practicaltest(email,test_id,qid,code,input,executed,uid) values(%s,%s,%s,%s,%s,%s,%s)', (session['email'], testid, "1", codeByStudent, inputByStudent, executedByStudent, session['uid']))
-			mysql.connection.commit()
-			if insertStudentData > 0:
-				insertStudentTestInfoData = cur.execute('UPDATE studentTestInfo set completed = 1 where test_id = %s and email = %s and uid = %s', (test_id, session['email'], session['uid']))
+			try:
+				_upsert_exam_response(
+					cur, 'practicaltest', session['email'], testid, '1', '', session['uid'],
+					{'code': request.form.get('codeByStudent', ''), 'input': request.form.get('inputByStudent', ''), 'executed': request.form.get('executedByStudent', '')},
+				)
+				cur.execute('UPDATE studentTestInfo SET completed = 1, time_left = SEC_TO_TIME(0) WHERE test_id = %s AND email = %s AND uid = %s', (test_id, session['email'], session['uid']))
 				mysql.connection.commit()
-				cur.close()
-				if insertStudentTestInfoData > 0:
-					try:
-						save_exam_result(session['email'], testid, session['uid'])
-					except Exception as err:
-						app.logger.exception('Practical result save failed: exam_id=%s student_id=%s', testid, session.get('uid'))
-						flash('Result calculation failed. Please contact your instructor.', 'danger')
-						return redirect(url_for('student_index'))
-					_complete_secure_exam_session(testid)
-					flash('Successfully Exam Submitted', 'success')
-					return redirect(url_for('tests_given', email=session['email']))
-				else:
-					cur.close()
-					flash('Some Error was occured!', 'error')
-					return redirect(url_for('student_index'))	
-			else:
-				cur.close()
-				flash('Some Error was occured!', 'error')
+			except Exception:
+				mysql.connection.rollback()
+				app.logger.exception('Practical answer save failed: exam_id=%s student_id=%s', testid, session.get('uid'))
+				flash('Could not save your answer. Please try again.', 'danger')
 				return redirect(url_for('student_index'))
+			finally:
+				cur.close()
+			try:
+				save_exam_result(session['email'], testid, session['uid'])
+			except Exception:
+				app.logger.exception('Practical result save failed: exam_id=%s student_id=%s', testid, session.get('uid'))
+				flash('Result calculation failed. Please contact your instructor.', 'danger')
+				return redirect(url_for('student_index'))
+			_complete_secure_exam_session(testid)
+			flash('Successfully Exam Submitted', 'success')
+			return redirect(url_for('tests_given', email=session['email']))
 
 @app.route('/randomize', methods = ['POST'])
 def random_gen():
