@@ -62,6 +62,9 @@ models/models/
 # Application Data
 .gemini/
 registration_tokens/
+audio_evidence/
+/loadtest_sessions.csv
+/loadtest_frame.jpg
 
 # Temporary / Scratch Files
 diff_appjs.txt

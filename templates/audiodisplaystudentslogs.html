@@ -6,7 +6,7 @@
           <div class="card-body align-items-center d-flex justify-content-center">     
               <div class="row mb-4">
                   <div class="col-lg-12 col-sm-16">
-                    <h3 class="h3 text-center">STUDENT AUDIO LOGS of {{testid}} of {{email}}</h3>  
+                    <h3 class="h3 text-center">STUDENT AUDIO RECORDINGS of {{testid}} of {{email}}</h3>
                   </div>
                   <div class="card-body justify-content-md-center">
                       <div class="table-responsive">
@@ -20,20 +20,18 @@
 </tr>
 <tbody>
   {% for res in callresults %}
+  {% set voice_db = res.get('voice_db')|default(0, true)|float %}
   <tr>
   <td>{{res['name']}}</td>
   <td>
-  {{res['voice_db']}}
-  {% if res.get('audio_evidence') %}
-  <br><audio controls preload="none" style="width:220px">
-    <source src="{{ url_for('audio_evidence', filename=res['audio_evidence']) }}" type="audio/webm">
+  {{voice_db}}
+  <br><audio controls preload="metadata" style="width:220px" src="{{ url_for('audio_evidence', filename=res['audio_evidence']) }}">
   </audio>
-  {% endif %}
   </td>
   <td>
-  {% if res['voice_db'] < 10 %}
+  {% if voice_db < 10 %}
   <h6 class="text-primary"> Normal</h6>
-  {% elif res['voice_db'] >= 10 and res['voice_db'] < 20 %}
+  {% elif voice_db < 20 %}
   <h6 class="text-muted">Little Disturbance</h6>
   {% else %}
   <h6 class="text-danger">More Disturbance</h6>
@@ -44,6 +42,9 @@
   {% endfor %}
 </tbody>
 </table>
+{% if not callresults %}
+<p class="text-muted text-center py-3">No audio recordings have been saved for this exam attempt yet.</p>
+{% endif %}
 </div>
 </div>
 </div>

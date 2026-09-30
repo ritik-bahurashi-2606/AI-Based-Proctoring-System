@@ -68,7 +68,7 @@
                                 <p></p>
                                 <h2 class="h5">Audio Monitoring</h2>
                                 <h3 class="h2 mb-1" id="mob"></h3>
-                                <button class="btn btn-block btn-primary"  onclick="location.href='http://localhost:5000/audiodisplaystudentslogs/{{testid}}/{{email}}'">VIEW</button>
+                                <a class="btn btn-block btn-primary" href="{{ url_for('audiodisplaystudentslogs', testid=testid, email=email) }}">LISTEN TO AUDIO</a>
                             </div>
                             </div>
                             </div>

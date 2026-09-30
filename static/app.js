@@ -5,6 +5,11 @@ var examUrl = window.location.pathname;
 var timerInterval = null;
 var timeSyncInterval = null;
 var submissionInProgress = false;
+var answerSaveQueue = Promise.resolve();
+var savedAnswers = {};
+var queuedAnswers = {};
+var questionsById = {};
+var questionLoadError = null;
 const NOT_MARKED=0;
 const MARKED=1;
 const BOOKMARKED=2;
@@ -32,19 +37,31 @@ function startExamProctoring() {
 
 $(document).ready( function() {
     var url = window.location.href;
-    var list = url.split('/');
     $('.question').remove();
     if (url.includes('/give-test/')) {
+        $('#que').text('Loading exam questions...');
         $.ajax({
             type:"POST",
-            url:"/randomize",
+            url: examUrl,
             dataType:"json",
-            data : {id: list[list.length-1]},
+            data : {flag: 'start'},
             success: function(temp) {
-                nos = temp || [];
+                nos = (temp && temp.ids) || [];
+                questionsById = (temp && temp.questions) || {};
+                if (!nos.length || nos.some(function(qid) { return !questionsById[String(qid)]; })) {
+                    questionLoadError = new Error('The exam questions could not be loaded.');
+                    console.error(questionLoadError);
+                    $('#que').text('Exam questions could not be loaded. Please refresh the exam page.');
+                    return;
+                }
                 make_array();
                 display_ques(1);
                 ques_grid();
+            },
+            error: function(error) {
+                questionLoadError = error;
+                console.error('Could not load exam questions:', error);
+                $('#que').text('Exam questions could not be loaded. Please refresh the exam page.');
             }
         });
     }
@@ -65,26 +82,21 @@ var unmark_all = function() {
 var display_ques = function(move) {
     unmark_all();
     if (!nos.length || !data[curr+1]) return;
-    $.ajax({
-        type: "POST",
-        dataType: 'json',
-        url: examUrl,
-        data : {flag: 'get', no: nos[curr]},
-        success: function(temp) {
-            $('#que').text(temp['q']);
-            $('#a').text('𝐀.  '+temp['a']);
-            $('#b').text('𝐁.  '+temp['b']);
-            $('#c').text('𝐂.  '+temp['c']);
-            $('#d').text('𝐃.  '+temp['d']);
-            $('#queid').text('Question No. '+ (move));
-            $('#mark').text('Marks: '+temp['marks']);
-            if(data[curr+1].marked != null)
-               $('#' + data[curr+1].marked).css("background-color",'rgba(0, 255, 0, 0.6)');
-        },
-        error: function(error){
-            console.log("Here is the error res: " + JSON.stringify(error));
-        }
-    });
+    var temp = questionsById[String(nos[curr])];
+    if (!temp) {
+        questionLoadError = new Error('Question ' + (curr + 1) + ' is missing from the loaded exam.');
+        console.error(questionLoadError);
+        return;
+    }
+    $('#que').text(temp.q);
+    $('#a').text('𝐀.  '+temp.a);
+    $('#b').text('𝐁.  '+temp.b);
+    $('#c').text('𝐂.  '+temp.c);
+    $('#d').text('𝐃.  '+temp.d);
+    $('#queid').text('Question No. '+ move);
+    $('#mark').text('Marks: '+temp.marks);
+    if(data[curr+1].marked != null)
+       $('#' + data[curr+1].marked).css("background-color",'rgba(0, 255, 0, 0.6)');
 }
 var flag_time = true;
 function startTimer(duration, display) {
@@ -109,6 +121,15 @@ function startTimer(duration, display) {
 }
 
 function finish_test() {
+    if (questionLoadError || !nos.length) {
+        var loadMessage = 'Exam questions are not ready yet. Please wait and try again.';
+        if (window.Swal) {
+            Swal.fire('Exam not ready', loadMessage, 'error');
+        } else {
+            alert(loadMessage);
+        }
+        return;
+    }
     if (submissionInProgress) return;
     submissionInProgress = true;
     save_current_answer(false);
@@ -117,56 +138,77 @@ function finish_test() {
     flag_time = false;
     if (timerInterval) clearInterval(timerInterval);
     if (timeSyncInterval) clearInterval(timeSyncInterval);
-    if (typeof window.stopStreaming === 'function') window.stopStreaming();
+    var audioUploadComplete = typeof window.stopStreaming === 'function'
+        ? window.stopStreaming()
+        : Promise.resolve();
 
     // Collect all marked answers across all questions
     var all_answers = {};
     for (var i = 1; i <= nos.length; i++) {
-        if (data[i] && data[i].marked) {
-            all_answers[nos[i-1]] = data[i].marked;
+        if (data[i]) {
+            all_answers[nos[i-1]] = data[i].marked || '';
         }
     }
 
-    $.ajax({
-        type: "POST",
-        dataType: "json",
-        url: examUrl,
-        data: {
-            flag: 'completed',
-            answers: JSON.stringify(all_answers)
-        },
-        success: function(resp) {
-            if (!resp || resp.status !== 'success') {
+    var submitAnswers = function () {
+        $.ajax({
+            type: "POST",
+            dataType: "json",
+            url: examUrl,
+            data: {
+                flag: 'completed',
+                answers: JSON.stringify(all_answers)
+            },
+            success: function(resp) {
+                if (!resp || resp.status !== 'success') {
+                    submissionInProgress = false;
+                    var message = (resp && resp.message) || 'The exam could not be submitted. Please try again.';
+                    console.error('Finish test failed:', message);
+                    if (window.Swal) {
+                        Swal.fire('Submit failed', message, 'error');
+                    } else {
+                        alert(message);
+                    }
+                    return;
+                }
+                if (window.SecureExam) window.SecureExam.end();
+                if (resp && resp.redirect_url) {
+                    window.location.replace(resp.redirect_url);
+                } else {
+                    window.location.replace('/student_index');
+                }
+            },
+            error: function(error) {
                 submissionInProgress = false;
-                var message = (resp && resp.message) || 'The exam could not be submitted. Please try again.';
-                console.error('Finish test failed:', message);
+                console.error("Finish test failed:", error);
+                var message = error.responseJSON && error.responseJSON.message
+                    ? error.responseJSON.message
+                    : 'Please check your connection and try again.';
                 if (window.Swal) {
                     Swal.fire('Submit failed', message, 'error');
                 } else {
                     alert(message);
                 }
-                return;
             }
-            if (window.SecureExam) window.SecureExam.end();
-            if (resp && resp.redirect_url) {
-                window.location.replace(resp.redirect_url);
-            } else {
-                window.location.replace('/student_index');
-            }
-        },
-        error: function(error) {
-            submissionInProgress = false;
-            console.error("Finish test failed:", error);
-            var message = error.responseJSON && error.responseJSON.message
-                ? error.responseJSON.message
-                : 'Please check your connection and try again.';
-            if (window.Swal) {
-                Swal.fire('Submit failed', message, 'error');
-            } else {
-                alert(message);
-            }
+        });
+    };
+    Promise.resolve(audioUploadComplete).catch(function(error) {
+        console.error('Audio evidence upload did not finish before exam submission:', error);
+        if (window.Swal) {
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'warning',
+                title: 'Audio evidence could not be saved.',
+                showConfirmButton: false,
+                timer: 5000
+            });
+        } else {
+            console.warn('Audio evidence could not be saved.');
         }
-    });    
+    }).then(function() {
+        return answerSaveQueue;
+    }).then(submitAnswers);
 }
 
 function sendTime() {
@@ -212,36 +254,48 @@ $(document).on('click', '#prev', function(e){
 });
 
 function save_current_answer(markSubmitted) {
-    var marked;
     if(flag_time == false){
         return false;
     }
-    $('#options td').each(function(i) 
-    {
-        if($(this).css("background-color") != 'rgba(0, 0, 0, 0)'){
-            marked =  $(this).attr('id');
-            data[curr+1].marked= marked;
-            if (data[curr+1].status === BOOKMARKED || data[curr+1].status === SUBMITTED_BOOKMARKED) {
-                data[curr+1].status = SUBMITTED_BOOKMARKED;
-            } else if (markSubmitted || data[curr+1].status === MARKED) {
-                data[curr+1].status = SUBMITTED;
-            }
-            $('#question-list').empty();
-            ques_grid();
+    var answerData = data[curr+1];
+    if (!answerData) return false;
+    var qid = String(nos[curr]);
+    var answer = answerData.marked;
+    if (answer !== null && answer !== undefined) {
+        if (answerData.status === BOOKMARKED || answerData.status === SUBMITTED_BOOKMARKED) {
+            answerData.status = SUBMITTED_BOOKMARKED;
+        } else if (markSubmitted || answerData.status === MARKED) {
+            answerData.status = SUBMITTED;
         }
+    } else if (!Object.prototype.hasOwnProperty.call(queuedAnswers, qid)) {
+        return false;
+    }
+    updateQuestionGridItem(curr);
+    if (Object.prototype.hasOwnProperty.call(queuedAnswers, qid) && queuedAnswers[qid] === answer) return true;
+    queuedAnswers[qid] = answer;
+
+    var saveRequest = answerSaveQueue.then(function() {
+        return $.ajax({
+            type: 'POST',
+            dataType: 'json',
+            url: examUrl,
+            data: {flag: 'mark', qid: qid, ans: answer || ''}
+        });
+    }).then(function(response) {
+        if (!response || response.status !== 'success') {
+            throw new Error((response && response.message) || 'The answer could not be saved.');
+        }
+        if (answer === null || answer === undefined) {
+            delete savedAnswers[qid];
+        } else {
+            savedAnswers[qid] = answer;
+        }
+    }).catch(function(error) {
+        if (queuedAnswers[qid] === answer) delete queuedAnswers[qid];
+        throw error;
     });
-    if (!marked) return false;
-    $.ajax({
-        type: "POST",
-        dataType: 'json',
-        url: examUrl,
-        data : {flag: 'mark', qid: nos[curr], ans: marked},
-        success: function(data) {
-            console.log('Answer saved', data);
-        },
-        error: function(error){
-            console.log("Here is the error res: " + JSON.stringify(error));
-        }
+    answerSaveQueue = saveRequest.catch(function(error) {
+        console.error('Answer save failed for question ' + qid + ':', error);
     });
     return true;
 }
@@ -259,22 +313,16 @@ $('#bookmark').on('click', function(e){
     if( status == MARKED)
     {
         data[curr+1].status = MARKED_BOOKMARKED;
-        $('#question-list').empty();
-        ques_grid();
     }
     else if(status == SUBMITTED)
     {
         data[curr+1].status = SUBMITTED_BOOKMARKED;
-        $('#question-list').empty();
-        ques_grid();
     }
     else
     {
         data[curr+1].status = BOOKMARKED;
-        $('#question-list').empty();
-        ques_grid();
     }
-
+    updateQuestionGridItem(curr);
 });
 
 
@@ -292,9 +340,11 @@ $('#options').on('click', 'td', function(){
         save_current_answer(false);
     }
     else {
+        var previousAnswer = data[curr+1].marked;
         $(this).css("background-color",'rgba(0, 0, 0, 0)');
         data[curr+1].status = NOT_MARKED;
         data[curr+1].marked = null;
+        if (previousAnswer) save_current_answer(false);
     }
 });
 
@@ -317,23 +367,7 @@ var marked = function() {
 var ques_grid = function() {
     document.getElementById("overlay").style.display = "block";
     for(var i=1;i<=nos.length;i++) {
-        var color = '';
-        var status = data[i].status;
-        if(status == NOT_MARKED)
-        {
-            color = '#1976D2';
-        }
-        else if(status == SUBMITTED)
-        {
-            color = '#42ed62';
-        }
-        else if(status == BOOKMARKED || status == SUBMITTED_BOOKMARKED)
-        {
-            color = '#e6ed7b';
-        }
-        else{
-            color = '#f44336';
-        }
+        var color = questionStatusColor(data[i].status);
         j = i<10 ? "0" + i: i
         $('#question-list').append('<div class="col-sm-2"><button class="btn btn-primary" style="background-color:' + color + '; color:white;"><div class="question" style="background-color:' + color + '; color:white;">' + j + '</div></div></div>');
     }
@@ -343,6 +377,22 @@ var ques_grid = function() {
         curr = id-1;
         display_ques(curr+1);
     });
+}
+
+function questionStatusColor(status) {
+    if (status === NOT_MARKED) return '#1976D2';
+    if (status === SUBMITTED) return '#42ed62';
+    if (status === BOOKMARKED || status === SUBMITTED_BOOKMARKED) return '#e6ed7b';
+    return '#f44336';
+}
+
+function updateQuestionGridItem(questionIndex) {
+    var answerData = data[questionIndex + 1];
+    var question = $('#question-list .question').eq(questionIndex);
+    if (!answerData || !question.length) return;
+    var color = questionStatusColor(answerData.status);
+    question.css('background-color', color);
+    question.closest('button').css('background-color', color);
 }
 
 var make_array = function() {
@@ -359,9 +409,12 @@ var make_array = function() {
         answers = {};
     }
     for(var key in answers) {
-        if (data[parseInt(key)+1]) {
-            data[parseInt(key)+1].marked = answers[key];
-            data[parseInt(key)+1].status = SUBMITTED;
+        var questionIndex = nos.map(String).indexOf(String(key));
+        if (questionIndex >= 0 && data[questionIndex+1]) {
+            data[questionIndex+1].marked = answers[key];
+            data[questionIndex+1].status = SUBMITTED;
+            savedAnswers[String(key)] = answers[key];
+            queuedAnswers[String(key)] = answers[key];
         }
     }
 }

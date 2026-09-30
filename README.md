@@ -81,6 +81,64 @@ cp .env.example .env
 
 Update `.env` with your local MySQL credentials, mail settings, application secrets, and optional model backend settings.
 
+## Docker Compose Runtime
+
+The Compose stack runs the Flask application, MySQL, Redis, and a separate
+proctoring worker:
+
+```bash
+docker compose up --build
+```
+
+The default stack runs two ordered proctoring consumers. Each student/exam is
+consistently assigned to one shard so temporal warnings and event cooldowns
+remain in frame order while different students can be analyzed concurrently.
+The browser keeps a captured frame and retries it when the bounded queue is
+full; this preserves the frame but can delay later warnings when worker
+throughput is below camera capture demand. `PROCTORING_MAX_PENDING` controls
+the queue limit (default `120`). Request, queue-wait, and CV processing
+durations are available in the browser's Network panel through the
+`Server-Timing` response header and in application/worker logs.
+
+For a four-shard load test, set `PROCTORING_WORKER_SHARDS=4` in `.env` and
+enable the two additional ordered workers:
+
+```bash
+docker compose --profile proctoring-scale up --build
+```
+
+Each shard has one worker to preserve ordering for its assigned students.
+Keep the shard count equal to the number of enabled worker services; scaling
+increases AI-model memory use and should be load-tested on the target machine.
+
+Existing databases need the answer uniqueness index before deploying the
+atomic answer-save path. Check for duplicates of `(test_id, qid, email, uid)`
+first, then apply `DB/migrations/20260930_student_answer_unique_key.sql`.
+The app does not delete or merge existing answer rows automatically.
+
+### Concurrent exam load test
+
+The k6 scenario in `tools/exam_load_test.js` exercises the real question
+preload, answer-save, and camera-analysis endpoints. Run it only against a
+staging database and a dedicated test exam: it writes answers for every test
+session and intentionally does not submit/finish the exams. Create
+`loadtest_sessions.csv` with one unique, active student session per virtual
+user (`session-cookie,exam_id` per line), plus a non-sensitive 320x320 JPEG at
+`loadtest_frame.jpg`. Never commit session cookies or real student camera
+images.
+
+After starting the four-shard Compose stack, run:
+
+```bash
+k6 run -e BASE_URL=http://localhost:5000 -e VUS=100 -e DURATION=3m -e K6_SESSION_FILE=loadtest_sessions.csv -e K6_FRAME_PATH=loadtest_frame.jpg tools/exam_load_test.js
+```
+
+The k6 summary reports question preload, answer-save, proctoring acceptance,
+worker queue wait, and CV processing latency distributions, along with failed
+flows. Review p95/p99 and queue wait before increasing worker count or
+concurrent users; this repository does not claim a 100-student capacity until
+that run passes on the target AWS instance and model backend.
+
 ## Model Backend Configuration
 
 The model backend framework is configured with environment variables in `.env`.

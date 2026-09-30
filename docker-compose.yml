@@ -1,22 +1,91 @@
-version: "3.9"
+x-proctoring-worker: &proctoring-worker
+  image: myproctor-app:local
+  restart: unless-stopped
+  command: ["celery", "-A", "proctoring_worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "proctoring-0"]
+  environment:
+    MYSQL_HOST: host.docker.internal
+    MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the application .env file}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the application .env file}
+    MYSQL_DB: ${MYSQL_DB:?Set MYSQL_DB in the application .env file}
+    MYSQL_PORT: ${MYSQL_PORT:-3306}
+    CELERY_BROKER_URL: redis://redis:6379/0
+    PROCTORING_WORKER_SHARDS: ${PROCTORING_WORKER_SHARDS:-2}
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  volumes:
+    - ./audio_evidence:/app/audio_evidence
 
 services:
   web:
+    image: myproctor-app:local
     build: .
     container_name: myproctor_web
     restart: unless-stopped
     ports:
       - "5000:5000"
     environment:
-      MYSQL_HOST: db
-      MYSQL_USER: root
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ritik}
-      MYSQL_DB: myproctor
+      MYSQL_HOST: host.docker.internal
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the application .env file}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the application .env file}
+      MYSQL_DB: ${MYSQL_DB:?Set MYSQL_DB in the application .env file}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MAIL_SERVER: ${MAIL_SERVER:?Set MAIL_SERVER in the application .env file}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:?Set MAIL_USERNAME in the application .env file}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:?Set MAIL_PASSWORD in the application .env file}
+      MAIL_USE_TLS: ${MAIL_USE_TLS:-True}
+      MAIL_USE_SSL: ${MAIL_USE_SSL:-False}
+      MAIL_DEFAULT_SENDER: ${MAIL_DEFAULT_SENDER:?Set MAIL_DEFAULT_SENDER in the application .env file}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      PROCTORING_ASYNC: ${PROCTORING_ASYNC:-true}
+      PROCTORING_WORKER_SHARDS: ${PROCTORING_WORKER_SHARDS:-2}
+      PROCTORING_MAX_PENDING: ${PROCTORING_MAX_PENDING:-120}
+      PROCTORING_RESERVATION_LEASE_SECONDS: ${PROCTORING_RESERVATION_LEASE_SECONDS:-1800}
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./registration_tokens:/app/registration_tokens
+      - ./audio_evidence:/app/audio_evidence
+
+  proctoring_worker_0:
+    <<: *proctoring-worker
+    container_name: myproctor_proctoring_worker_0
+
+  proctoring_worker_1:
+    <<: *proctoring-worker
+    container_name: myproctor_proctoring_worker_1
+    command: ["celery", "-A", "proctoring_worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "proctoring-1"]
+
+  proctoring_worker_2:
+    <<: *proctoring-worker
+    container_name: myproctor_proctoring_worker_2
+    command: ["celery", "-A", "proctoring_worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "proctoring-2"]
+    profiles: ["proctoring-scale"]
+
+  proctoring_worker_3:
+    <<: *proctoring-worker
+    container_name: myproctor_proctoring_worker_3
+    command: ["celery", "-A", "proctoring_worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "proctoring-3"]
+    profiles: ["proctoring-scale"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: myproctor_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - proctoring_data:/data
 
   db:
     image: mysql:8.0
@@ -26,7 +95,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-ritik}
       MYSQL_DATABASE: myproctor
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - db_data:/var/lib/mysql
       - ./DB/quizappstructure.sql:/docker-entrypoint-initdb.d/init.sql
@@ -38,3 +107,4 @@ services:
 
 volumes:
   db_data:
+  proctoring_data:

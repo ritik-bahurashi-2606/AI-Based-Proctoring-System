@@ -136,6 +136,7 @@ CREATE TABLE `proctoring_log` (
   `phone_detection` tinyint(2) NOT NULL,
   `person_status` tinyint(2) NOT NULL,
   `audio_evidence` varchar(255) DEFAULT NULL,
+  `proctoring_job_id` varchar(36) DEFAULT NULL,
   `log_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `uid` bigint(20) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
@@ -297,6 +298,7 @@ ALTER TABLE `proctoring_log`
   ADD PRIMARY KEY (`pid`),
   ADD KEY `proctor_email_index` (`email`),
   ADD KEY `proctor_email_test_id_index` (`email`,`test_id`),
+  ADD UNIQUE KEY `uniq_proctoring_job_id` (`proctoring_job_id`),
   ADD KEY `uid` (`uid`);
 
 --
@@ -304,21 +306,24 @@ ALTER TABLE `proctoring_log`
 --
 ALTER TABLE `questions`
   ADD PRIMARY KEY (`questions_uid`),
-  ADD KEY `uid` (`uid`);
+  ADD KEY `uid` (`uid`),
+  ADD KEY `idx_questions_test_id` (`test_id`);
 
 --
 -- Indexes for table `students`
 --
 ALTER TABLE `students`
   ADD PRIMARY KEY (`sid`),
-  ADD KEY `uid` (`uid`);
+  ADD KEY `uid` (`uid`),
+  ADD UNIQUE KEY `uniq_student_exam_answer` (`test_id`, `qid`, `email`, `uid`);
 
 --
 -- Indexes for table `studenttestinfo`
 --
 ALTER TABLE `studenttestinfo`
   ADD PRIMARY KEY (`stiid`),
-  ADD KEY `uid` (`uid`);
+  ADD KEY `uid` (`uid`),
+  ADD KEY `idx_studenttestinfo_exam_student` (`test_id`, `email`, `uid`, `completed`);
 
 --
 -- Indexes for table `teachers`

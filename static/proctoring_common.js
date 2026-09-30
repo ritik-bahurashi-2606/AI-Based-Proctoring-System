@@ -13,6 +13,14 @@
     return '';
   }
 
+  function newSnapshotId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (char) {
+      var random = Math.random() * 16 | 0;
+      return (char === 'x' ? random : (random & 0x3 | 0x8)).toString(16);
+    });
+  }
+
   /* ── State ───────────────────────────────────────────────────────────── */
   var cameraStream         = null;
   var audioContext         = null;
@@ -22,12 +30,14 @@
   var audioValues          = 0;
   var audioLength          = 1;
   var mediaRecorder        = null;
-  var audioChunks          = [];
   var recordingAudio       = false;
   var audioSilenceTimer    = null;
-  var lastAudioPid         = '';
+  var pendingAudioUploads  = Promise.resolve();
+  var audioUploadError     = null;
   var warningCounts        = {};
   var lastWarningAt        = {};
+  var captureActive        = false;
+  var snapshotTimer        = null;
 
   /* Expose key functions globally so app.js can call them */
   /* (set after functions are defined — see bottom of IIFE) */
@@ -116,7 +126,6 @@
 
     /* Trigger audio recording if audio is suspicious */
     if (response.audio_suspicious) {
-      if (response.pid) lastAudioPid = String(response.pid);
       startAudioEvidenceRecording();
     }
   }
@@ -125,14 +134,54 @@
    *  AUDIO EVIDENCE RECORDING
    * ═══════════════════════════════════════════════════════════════════════ */
   function uploadAudioEvidence(blob) {
-    if (!blob || !getTestId()) return;
+    if (!blob || !blob.size || !getTestId()) return Promise.resolve();
     var formData = new FormData();
     formData.append('testid',     getTestId());
     formData.append('event_type', 'suspicious_audio');
-    if (lastAudioPid) formData.append('pid', lastAudioPid);
-    formData.append('audio', blob, 'audio-evidence.webm');
-    fetch('/upload_audio_evidence', { method: 'POST', body: formData })
-      .catch(function (err) { console.warn('Audio evidence upload failed:', err); });
+    formData.append('voice_db', String(currentAudioAverage()));
+    var extension = blob.type.indexOf('audio/mp4') === 0 ? 'mp4'
+      : blob.type.indexOf('audio/ogg') === 0 ? 'ogg' : 'webm';
+    formData.append('audio', blob, 'audio-evidence.' + extension);
+    return fetch('/upload_audio_evidence', { method: 'POST', body: formData })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        if (data && data.status === 'success' && data.file) {
+          console.log('Audio evidence saved:', data.file);
+        } else {
+          throw new Error((data && data.message) || 'Server did not confirm audio evidence storage');
+        }
+      })
+      .catch(function (err) {
+        console.warn('Audio evidence upload failed:', err);
+        audioUploadError = err;
+      });
+  }
+
+  function stopAudioEvidenceRecording() {
+    if (audioSilenceTimer) {
+      clearTimeout(audioSilenceTimer);
+      audioSilenceTimer = null;
+    }
+    var recorder = mediaRecorder;
+    if (recorder && recordingAudio && recorder.state !== 'inactive') {
+      var stopped = new Promise(function (resolve) {
+        recorder.addEventListener('stop', resolve, { once: true });
+        recorder.stop();
+      });
+      recordingAudio = false;
+      return stopped.then(function () {
+        return pendingAudioUploads;
+      }).then(function () {
+        if (audioUploadError) throw audioUploadError;
+      });
+    }
+    recordingAudio = false;
+    return pendingAudioUploads.then(function () {
+      if (audioUploadError) throw audioUploadError;
+    });
   }
 
   function startAudioEvidenceRecording() {
@@ -141,18 +190,30 @@
     /* Start a fresh recording if not already active */
     if (!recordingAudio) {
       try {
-        audioChunks = [];
-        var options = (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm'))
-          ? { mimeType: 'audio/webm' } : undefined;
-        mediaRecorder = new MediaRecorder(cameraStream, options);
-        mediaRecorder.ondataavailable = function (e) {
+        var audioChunks = [];
+        var audioStream = new MediaStream(cameraStream.getAudioTracks());
+        var supportedTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+        var options;
+        for (var i = 0; i < supportedTypes.length; i++) {
+          if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(supportedTypes[i])) {
+            options = { mimeType: supportedTypes[i] };
+            break;
+          }
+        }
+        var recorder = new MediaRecorder(audioStream, options);
+        mediaRecorder = recorder;
+        recorder.ondataavailable = function (e) {
           if (e.data && e.data.size > 0) audioChunks.push(e.data);
         };
-        mediaRecorder.onstop = function () {
-          uploadAudioEvidence(new Blob(audioChunks, { type: 'audio/webm' }));
-          audioChunks = [];
+        recorder.onstop = function () {
+          var mimeType = recorder.mimeType || 'audio/webm';
+          var upload = uploadAudioEvidence(new Blob(audioChunks, { type: mimeType }));
+          pendingAudioUploads = Promise.all([
+            pendingAudioUploads.catch(function () {}),
+            upload
+          ]);
         };
-        mediaRecorder.start();
+        recorder.start();
         recordingAudio = true;
       } catch (err) {
         console.warn('Audio recorder could not start:', err);
@@ -163,10 +224,7 @@
     /* Reset silence timer — stop after sustained quiet */
     if (audioSilenceTimer) clearTimeout(audioSilenceTimer);
     audioSilenceTimer = setTimeout(function () {
-      if (mediaRecorder && recordingAudio && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-      }
-      recordingAudio = false;
+      stopAudioEvidenceRecording();
     }, AUDIO_SILENCE_TIMEOUT_MS);
   }
 
@@ -244,11 +302,20 @@
   };
 
   window.stopStreaming = function () {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(function (t) { t.stop(); });
-      cameraStream = null;
-      window._proctoringStream = null;
+    captureActive = false;
+    if (snapshotTimer) {
+      clearTimeout(snapshotTimer);
+      snapshotTimer = null;
     }
+    var audioUploadComplete = stopAudioEvidenceRecording();
+    var streamToStop = cameraStream;
+    cameraStream = null;
+    window._proctoringStream = null;
+    return audioUploadComplete.finally(function () {
+      if (streamToStop) {
+        streamToStop.getTracks().forEach(function (t) { t.stop(); });
+      }
+    });
   };
 
   /* ── Globally expose key functions for app.js ────────────────────────── */
@@ -258,7 +325,93 @@
   /* ═══════════════════════════════════════════════════════════════════════
    *  FRAME CAPTURE & SEND
    * ═══════════════════════════════════════════════════════════════════════ */
-  window.captureSnapshot = function () {
+  function scheduleNextSnapshot(capturedAt) {
+    if (!captureActive) return;
+    var delay = Math.max(0, SNAP_INTERVAL_MS - (Date.now() - capturedAt));
+    snapshotTimer = setTimeout(captureAndSendSnapshot, delay);
+  }
+
+  function retrySnapshot(snapshot, testId, capturedAt, retryCount) {
+    if (!captureActive) return;
+    var delay = Math.min(1000 * Math.pow(2, Math.min(retryCount, 4)), 15000);
+    if (retryCount === 0 || retryCount % 5 === 0) {
+      showProctorWarning(
+        'Proctoring analysis is delayed. Your captured frame is being retried.',
+        'proctoring_delayed'
+      );
+    }
+    setTimeout(function () {
+      if (captureActive) sendSnapshot(snapshot, testId, capturedAt, retryCount + 1);
+    }, delay);
+  }
+
+  function pollProctoringResult(jobId, testId, snapshot, capturedAt, retryCount) {
+    if (!captureActive) return;
+    $.ajax({
+      url: '/proctoring_status/' + encodeURIComponent(jobId),
+      type: 'GET',
+      dataType: 'json',
+      data: {testid: testId}
+    }).done(function (response, _status, xhr) {
+      if (xhr.status === 202 || (response && response.status === 'pending')) {
+        setTimeout(function () {
+          pollProctoringResult(jobId, testId, snapshot, capturedAt, retryCount);
+        }, 500);
+        return;
+      }
+      if (!response || response.status !== 'success') {
+        retrySnapshot(snapshot, testId, capturedAt, retryCount);
+        return;
+      }
+      handleProctorResponse(response);
+      scheduleNextSnapshot(capturedAt);
+    }).fail(function (xhr, status, err) {
+      if (xhr.status === 500) {
+        console.error('Proctoring worker failed; retrying the captured frame:', status, err);
+        retrySnapshot(snapshot, testId, capturedAt, retryCount + 1);
+        return;
+      }
+      if (xhr.status === 401 || xhr.status === 403 || xhr.status === 404) {
+        console.error('Cannot retrieve proctoring result:', status, err);
+        retrySnapshot(snapshot, testId, capturedAt, retryCount);
+        return;
+      }
+      setTimeout(function () {
+        pollProctoringResult(jobId, testId, snapshot, capturedAt, retryCount + 1);
+      }, Math.min(1000 * Math.pow(2, Math.min(retryCount, 4)), 15000));
+    });
+  }
+
+  function sendSnapshot(snapshot, testId, capturedAt, retryCount) {
+    if (!captureActive) return;
+    $.ajax({
+      url: '/video_feed',
+      type: 'POST',
+      dataType: 'json',
+      data: {data: snapshot}
+    }).done(function (response) {
+      if (response && response.status === 'queued' && response.job_id) {
+        pollProctoringResult(response.job_id, testId, snapshot, capturedAt, retryCount);
+        return;
+      }
+      if (!response || response.status !== 'success') {
+        retrySnapshot(snapshot, testId, capturedAt, retryCount);
+        return;
+      }
+      handleProctorResponse(response);
+      scheduleNextSnapshot(capturedAt);
+    }).fail(function (xhr, status, err) {
+      if (xhr.status === 401 || xhr.status === 403 || xhr.status === 404 || xhr.status === 400) {
+        console.error('Cannot submit proctoring frame:', status, err);
+        retrySnapshot(snapshot, testId, capturedAt, retryCount);
+        return;
+      }
+      retrySnapshot(snapshot, testId, capturedAt, retryCount + 1);
+    });
+  }
+
+  function captureAndSendSnapshot() {
+    if (!captureActive) return;
     var streamEl = document.getElementById('stream');
     var capture  = document.getElementById('capture');
     if (cameraStream && streamEl && capture) {
@@ -266,24 +419,28 @@
       ctx.drawImage(streamEl, 0, 0, capture.width, capture.height);
       var dataUrl = capture.toDataURL('image/jpeg', 0.82);
       var base64  = dataUrl.replace(/^data:image\/(jpeg|jpg);base64,/, '');
-      $.ajax({
-        url:      '/video_feed',
-        type:     'POST',
-        dataType: 'json',
-        data: {
-          data: {
-            imgData:  base64,
-            voice_db: currentAudioAverage(),
-            testid:   getTestId()
-          }
-        },
-        success: handleProctorResponse,
-        error: function (xhr, status, err) {
-          console.warn('video_feed request failed:', status, err);
-        }
-      });
+      var testId = getTestId();
+      var capturedAt = Date.now();
+      if (!testId) {
+        showProctorWarning('Proctoring is not linked to an active exam.', 'proctoring_unavailable');
+        snapshotTimer = setTimeout(captureAndSendSnapshot, SNAP_INTERVAL_MS);
+        return;
+      }
+      sendSnapshot({
+        imgData: base64,
+        voice_db: currentAudioAverage(),
+        testid: testId,
+        snapshot_id: newSnapshotId()
+      }, testId, capturedAt, 0);
+      return;
     }
-    setTimeout(window.captureSnapshot, SNAP_INTERVAL_MS);
+    snapshotTimer = setTimeout(captureAndSendSnapshot, SNAP_INTERVAL_MS);
+  }
+
+  window.captureSnapshot = function () {
+    if (captureActive) return;
+    captureActive = true;
+    captureAndSendSnapshot();
   };
 
   /* ═══════════════════════════════════════════════════════════════════════

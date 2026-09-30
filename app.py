@@ -32,13 +32,19 @@ from wtforms.fields import DateField
 from wtforms.validators import ValidationError, NumberRange
 from flask_session import Session
 from flask_cors import CORS, cross_origin
-import camera
 import io
 import os
 import time
 import uuid
+import hashlib
 from dotenv import load_dotenv
 from secure_exam import DEFAULT_POLICY, EVENT_SEVERITY, SecureExamService
+from exam_workflow import (
+	exam_schedule_now,
+	save_student_answer,
+	save_submitted_answers,
+	student_safe_question_payload,
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -247,34 +253,6 @@ def _fetch_result_context(cur, email, testid, student_uid):
 	if not ctx:
 		raise ValueError(f'Missing exam: {testid}')
 	return ctx
-
-
-def _save_submitted_answers(cur, email, testid, student_uid, submitted_answers):
-	if not isinstance(submitted_answers, dict):
-		raise ValueError('Submitted answers must be an object')
-
-	saved_count = 0
-	for qid, answer in submitted_answers.items():
-		qid_value = str(qid).strip()
-		answer_value = str(answer or '').strip()
-		if not qid_value or not answer_value:
-			continue
-		exists = cur.execute(
-			'SELECT 1 FROM students WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s LIMIT 1',
-			(testid, qid_value, email, student_uid),
-		)
-		if exists > 0:
-			cur.execute(
-				'UPDATE students SET ans = %s WHERE test_id = %s AND qid = %s AND email = %s AND uid = %s',
-				(answer_value, testid, qid_value, email, student_uid),
-			)
-		else:
-			cur.execute(
-				'INSERT INTO students(email, test_id, qid, ans, uid) VALUES(%s, %s, %s, %s, %s)',
-				(email, testid, qid_value, answer_value, student_uid),
-			)
-		saved_count += 1
-	return saved_count
 
 
 def _score_objective_answers(question_rows, answers, negative_percentage):
@@ -543,6 +521,7 @@ def save_pending_registration(name, email, password, user_type, imgdata, otp, ot
     registration_id = uuid.uuid4().hex
     payload = {
         'name': name,
+        'enqueued_at': time.time(),
         'email': email,
         'password': password,
         'user_type': user_type,
@@ -596,6 +575,30 @@ def render_verify_email(error=None, registration_id=None, dev_otp=None):
 @app.before_request
 def make_session_permanent():
 	session.permanent = True
+	request.environ['request_started_at'] = time.perf_counter()
+
+
+@app.after_request
+def report_exam_request_latency(response):
+	if request.path.startswith(('/give-test/', '/video_feed', '/proctoring_status/')):
+		started_at = request.environ.get('request_started_at')
+		if started_at is not None:
+			elapsed_ms = (time.perf_counter() - started_at) * 1000
+			timing = f'app;dur={elapsed_ms:.2f}'
+			cv_ms = request.environ.get('proctor_cv_duration_ms')
+			queue_ms = request.environ.get('proctor_queue_wait_ms')
+			if cv_ms is not None:
+				timing += f', cv;dur={cv_ms:.2f}'
+			if queue_ms is not None:
+				timing += f', queue;dur={queue_ms:.2f}'
+			response.headers['Server-Timing'] = timing
+			app.logger.info(
+				'Exam request latency: method=%s path=%s status=%s elapsed_ms=%.2f%s%s',
+				request.method, request.path, response.status_code, elapsed_ms,
+				f' cv_ms={cv_ms:.2f}' if cv_ms is not None else '',
+				f' queue_wait_ms={queue_ms:.2f}' if queue_ms is not None else '',
+			)
+	return response
 
 def user_role_professor(f):
 	@wraps(f)
@@ -669,11 +672,12 @@ def _ensure_proctoring_audio_column():
 			cur.execute("ALTER TABLE proctoring_log ADD COLUMN audio_evidence varchar(255) DEFAULT NULL")
 			mysql.connection.commit()
 	except Exception as err:
-		app.logger.warning('Could not verify/create proctoring_log.audio_evidence: %s', err)
+		app.logger.exception('Could not verify/create proctoring_log.audio_evidence')
 		try:
 			mysql.connection.rollback()
 		except Exception:
 			pass
+		raise
 	finally:
 		cur.close()
 
@@ -681,7 +685,19 @@ def _ensure_proctoring_audio_column():
 @app.route('/audio_evidence/<path:filename>')
 @professor_required
 def audio_evidence(filename):
-	return send_from_directory(_AUDIO_EVIDENCE_DIR, secure_filename(filename), as_attachment=False)
+	safe_filename = secure_filename(filename)
+	mimetype_by_extension = {
+		'.mp4': 'audio/mp4',
+		'.ogg': 'audio/ogg',
+		'.webm': 'audio/webm',
+	}
+	_, extension = os.path.splitext(safe_filename)
+	return send_from_directory(
+		_AUDIO_EVIDENCE_DIR,
+		safe_filename,
+		as_attachment=False,
+		mimetype=mimetype_by_extension.get(extension.lower(), 'application/octet-stream'),
+	)
 
 
 def _is_event_allowed(uid, test_id, event_type, cooldown=None):
@@ -710,153 +726,396 @@ def _is_normal_behavior(mob_status, person_status, user_move1, user_move2,
 	return phone_ok and person_ok and head_ok and gaze_ok and audio_ok
 
 
-@app.route('/video_feed', methods=['GET', 'POST'])
-@student_required
-def video_feed():
-	if request.method == 'POST':
+_proctoring_job_schema_checked = False
+
+
+def _ensure_proctoring_job_id_column():
+	global _proctoring_job_schema_checked
+	if _proctoring_job_schema_checked:
+		return
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute("SHOW COLUMNS FROM proctoring_log LIKE 'proctoring_job_id'")
+		if not cur.fetchone():
+			cur.execute(
+				'ALTER TABLE proctoring_log ADD COLUMN proctoring_job_id varchar(36) DEFAULT NULL'
+			)
+		cur.execute(
+			"SHOW INDEX FROM proctoring_log WHERE Key_name = 'uniq_proctoring_job_id'"
+		)
+		if not cur.fetchone():
+			cur.execute(
+				'ALTER TABLE proctoring_log ADD UNIQUE KEY uniq_proctoring_job_id (proctoring_job_id)'
+			)
+		mysql.connection.commit()
+		_proctoring_job_schema_checked = True
+	except Exception:
+		mysql.connection.rollback()
+		app.logger.exception('Could not ensure idempotent proctoring log schema')
+		raise
+	finally:
+		cur.close()
+
+
+def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_id=None):
+	cv_started_at = time.perf_counter()
+	import camera
+	proctor_data = camera.get_frame(img_data)
+	cv_duration_ms = (time.perf_counter() - cv_started_at) * 1000
+
+	try:
+		vdb_val = float(voice_db)
+	except (ValueError, TypeError):
+		vdb_val = 0.0
+
+	import proctoring_policy as pp
+	user_key = f"{uid}_{testid}"
+	policy = pp.evaluate_proctoring_event(user_key, proctor_data, vdb_val, img_data)
+	warnings = policy['warnings']
+	logged_events = policy['events']
+	audio_suspicious = policy['audio_suspicious']
+	should_log = policy['should_log']
+
+	logged = False
+	log_pid = None
+	if should_log and logged_events:
+		cur = None
 		try:
-			imgData  = request.form['data[imgData]']
-			testid   = request.form['data[testid]']
-			voice_db = request.form['data[voice_db]']
-		except KeyError as ke:
-			return jsonify({'status': 'error', 'message': f'Missing field: {ke}'}), 400
-
-		# ── Run CV pipeline ───────────────────────────────────────────────────
-		try:
-			proctorData = camera.get_frame(imgData)
-		except Exception as cam_err:
-			app.logger.error('camera.get_frame error: %s', cam_err)
-			return jsonify({'status': 'error', 'message': 'Camera processing failed.'}), 500
-
-		jpg_as_text   = proctorData['jpg_as_text']
-		mob_status    = proctorData['mob_status']
-		person_status = proctorData['person_status']
-		user_move1    = proctorData['user_move1']
-		user_move2    = proctorData['user_move2']
-		eye_movements = proctorData['eye_movements']
-
-		uid   = session.get('uid')
-		email = session.get('email')
-		name  = session.get('name')
-
-		try:
-			vdb_val = float(voice_db)
-		except (ValueError, TypeError):
-			vdb_val = 0.0
-
-		# ── Temporal smart evaluation (head+gaze history, cooldowns) ──────────
-		import proctoring_policy as pp
-		user_key = f"{uid}_{testid}"
-		policy   = pp.evaluate_proctoring_event(user_key, proctorData, vdb_val, imgData)
-
-		warnings         = policy['warnings']      # all events (for toasts)
-		logged_events    = policy['events']         # cooldown-filtered events to log
-		audio_suspicious = policy['audio_suspicious']
-		should_log       = policy['should_log']
-
-		# ── DB logging: one row per suspicious event batch ───────────────────
-		logged  = False
-		log_pid = None
-		if should_log and logged_events:
-			# Keep the annotated frame for every stored malpractice event so professor
-			# reports have evidence instead of empty screenshots.
-			store_img = jpg_as_text
-
-			dominant = logged_events[0]['event_type']
-			try:
-				cur  = mysql.connection.cursor()
+			cur = mysql.connection.cursor()
+			if job_id:
+				_ensure_proctoring_job_id_column()
+				rows = cur.execute(
+					'INSERT INTO proctoring_log '
+					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
+					'user_movements_lr, user_movements_eyes, phone_detection, person_status, '
+					'uid, proctoring_job_id) '
+					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) '
+					'ON DUPLICATE KEY UPDATE pid = LAST_INSERT_ID(pid)',
+					(email, name, testid, vdb_val, proctor_data['jpg_as_text'],
+					 proctor_data['user_move1'], proctor_data['user_move2'],
+					 proctor_data['eye_movements'], proctor_data['mob_status'],
+					 proctor_data['person_status'], uid, job_id),
+				)
+			else:
 				rows = cur.execute(
 					'INSERT INTO proctoring_log '
 					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
 					'user_movements_lr, user_movements_eyes, phone_detection, person_status, uid) '
 					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
-					(email, name, testid, vdb_val, store_img,
-					 user_move1, user_move2, eye_movements,
-					 mob_status, person_status, uid),
+					(email, name, testid, vdb_val, proctor_data['jpg_as_text'],
+					 proctor_data['user_move1'], proctor_data['user_move2'],
+					 proctor_data['eye_movements'], proctor_data['mob_status'],
+					 proctor_data['person_status'], uid),
 				)
-				mysql.connection.commit()
-				log_pid = cur.lastrowid
+			mysql.connection.commit()
+			log_pid = cur.lastrowid
+			logged = rows > 0
+			app.logger.info(
+				'Proctoring log: uid=%s test=%s event=%s yaw=%.1f pitch=%.1f eyes=%d',
+				uid, testid, logged_events[0]['event_type'],
+				proctor_data.get('head_yaw', 0),
+				proctor_data.get('head_pitch', 0),
+				proctor_data['eye_movements'],
+			)
+		except Exception:
+			app.logger.exception('proctoring_log insert failed: uid=%s test=%s', uid, testid)
+			try:
+				mysql.connection.rollback()
+			except Exception:
+				app.logger.exception('Proctoring log transaction rollback failed')
+		finally:
+			if cur is not None:
 				cur.close()
-				logged = (rows > 0)
-				app.logger.info(
-					'Proctoring log: uid=%s test=%s event=%s yaw=%.1f pitch=%.1f eyes=%d',
-					uid, testid, dominant,
-					proctorData.get('head_yaw', 0),
-					proctorData.get('head_pitch', 0),
-					eye_movements,
-				)
-			except Exception as db_err:
-				app.logger.error('proctoring_log insert error: %s', db_err)
-				try:
-					mysql.connection.rollback()
-				except Exception:
-					pass
 
+	return {
+		'status': 'success',
+		'logged': logged,
+		'pid': log_pid,
+		'mob_status': proctor_data['mob_status'],
+		'person_status': proctor_data['person_status'],
+		'user_move_updown': proctor_data['user_move1'],
+		'user_move_lr': proctor_data['user_move2'],
+		'eye_movements': proctor_data['eye_movements'],
+		'head_yaw': proctor_data.get('head_yaw', 0),
+		'head_pitch': proctor_data.get('head_pitch', 0),
+		'head_confidence': proctor_data.get('head_confidence', 0),
+		'gaze_confidence': proctor_data.get('gaze_confidence', 0),
+		'audio_suspicious': audio_suspicious,
+		'warnings': warnings,
+		'cv_duration_ms': cv_duration_ms,
+	}
+
+
+class ProctoringQueueFull(Exception):
+	pass
+
+
+_proctoring_redis_client = None
+_proctoring_celery_client = None
+_PROCTORING_RESERVATION_KEY = 'proctoring:outstanding'
+
+
+def _get_proctoring_redis():
+	global _proctoring_redis_client
+	if _proctoring_redis_client is None:
+		import redis
+		_proctoring_redis_client = redis.Redis.from_url(
+			os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0'),
+			socket_connect_timeout=2,
+			socket_timeout=2,
+		)
+	return _proctoring_redis_client
+
+
+def _get_proctoring_celery():
+	global _proctoring_celery_client
+	if _proctoring_celery_client is None:
+		from celery import Celery
+		broker_url = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+		_proctoring_celery_client = Celery(
+			'myproctor_web',
+			broker=broker_url,
+			backend=broker_url,
+		)
+	return _proctoring_celery_client
+
+
+def _release_proctoring_reservation(job_id):
+	try:
+		_get_proctoring_redis().zrem(_PROCTORING_RESERVATION_KEY, job_id)
+	except Exception:
+		app.logger.exception('Could not release proctoring queue reservation: job=%s', job_id)
+
+
+def _enqueue_proctoring_frame(payload):
+	redis_client = _get_proctoring_redis()
+	redis_client.ping()
+	frame_id = payload.get('frame_id')
+	if frame_id:
+		try:
+			frame_id = str(uuid.UUID(str(frame_id)))
+		except (TypeError, ValueError) as err:
+			raise ValueError('Invalid proctoring frame identifier') from err
+		job_id = str(uuid.uuid5(
+			uuid.NAMESPACE_URL,
+			f"{payload['uid']}:{payload['testid']}:{frame_id}",
+		))
+	else:
+		job_id = str(uuid.uuid4())
+	now = time.time()
+	lease_seconds = int(os.getenv('PROCTORING_RESERVATION_LEASE_SECONDS', '1800'))
+	max_pending = int(os.getenv('PROCTORING_MAX_PENDING', '120'))
+	owner_key = f'proctoring:owner:{job_id}'
+	expected_owner = f"{payload['uid']}:{payload['testid']}"
+	reserve_capacity = redis_client.register_script("""
+		local owner = redis.call('GET', KEYS[2])
+		if owner then
+			if owner == ARGV[6] then return 2 end
+			return -1
+		end
+		redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1] - ARGV[2])
+		if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then
+			return 0
+		end
+		redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
+		redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]) * 2)
+		redis.call('SET', KEYS[2], ARGV[6], 'EX', tonumber(ARGV[5]))
+		return 1
+	""")
+	reserved = reserve_capacity(
+		keys=[_PROCTORING_RESERVATION_KEY, owner_key],
+		args=[now, lease_seconds, max_pending, job_id, 86400, expected_owner],
+	)
+	if reserved == 0:
+		raise ProctoringQueueFull()
+	if reserved == 2:
+		return job_id
+	if reserved < 0:
+		raise ValueError('Proctoring frame identifier is already in use')
+
+	try:
+		worker_shards = max(1, int(os.getenv('PROCTORING_WORKER_SHARDS', '1')))
+		shard = int.from_bytes(
+			hashlib.sha256(f"{payload['uid']}:{payload['testid']}".encode()).digest()[:4],
+			'big',
+		) % worker_shards
+		celery_client = _get_proctoring_celery()
+		celery_client.AsyncResult(job_id).forget()
+		celery_client.send_task(
+			'proctoring.process_frame',
+			args=[payload],
+			task_id=job_id,
+			queue=f'proctoring-{shard}',
+		)
+		app.logger.info(
+			'Proctoring job queued: job=%s uid=%s test=%s shard=%s outstanding=%s',
+			job_id, payload['uid'], payload['testid'],
+			shard,
+			redis_client.zcard(_PROCTORING_RESERVATION_KEY),
+		)
+	except Exception:
+		redis_client.delete(owner_key)
+		redis_client.zrem(_PROCTORING_RESERVATION_KEY, job_id)
+		raise
+	return job_id
+
+
+@app.route('/video_feed', methods=['GET', 'POST'])
+@student_required
+def video_feed():
+	if request.method != 'POST':
+		return jsonify({'status': 'error', 'message': 'POST required'}), 405
+	try:
+		img_data = request.form['data[imgData]']
+		testid = request.form['data[testid]']
+		voice_db = request.form['data[voice_db]']
+	except KeyError as ke:
+		return jsonify({'status': 'error', 'message': f'Missing field: {ke}'}), 400
+
+	uid = session.get('uid')
+	email = session.get('email')
+	name = session.get('name')
+	if not uid or not email or not name:
+		return jsonify({'status': 'error', 'message': 'Student session is incomplete'}), 401
+
+	payload = {
+		'img_data': img_data,
+		'frame_id': request.form.get('data[snapshot_id]', ''),
+		'testid': testid,
+		'voice_db': voice_db,
+		'uid': uid,
+		'email': email,
+		'name': name,
+		'enqueued_at': time.time(),
+	}
+	if os.getenv('PROCTORING_ASYNC', 'false').lower() in {'1', 'true', 'yes', 'on'}:
+		try:
+			job_id = _enqueue_proctoring_frame(payload)
+		except ProctoringQueueFull:
+			return jsonify({
+				'status': 'error',
+				'message': 'Proctoring is busy; the captured frame must be retried.',
+			}), 429, {'Retry-After': '1'}
+		except Exception:
+			app.logger.exception('Could not queue proctoring frame: uid=%s test=%s', uid, testid)
+			return jsonify({
+				'status': 'error',
+				'message': 'Proctoring is temporarily unavailable; the captured frame must be retried.',
+			}), 503, {'Retry-After': '2'}
+		return jsonify({'status': 'queued', 'job_id': job_id}), 202
+
+	try:
+		result = _process_proctoring_frame(img_data, testid, voice_db, uid, email, name)
+		request.environ['proctor_cv_duration_ms'] = result.pop('cv_duration_ms')
+		return jsonify(result)
+	except Exception:
+		app.logger.exception('Synchronous proctoring failed: uid=%s test=%s', uid, testid)
+		return jsonify({'status': 'error', 'message': 'Camera processing failed.'}), 500
+
+
+@app.route('/proctoring_status/<job_id>', methods=['GET'])
+@student_required
+def proctoring_status(job_id):
+	if os.getenv('PROCTORING_ASYNC', 'false').lower() not in {'1', 'true', 'yes', 'on'}:
+		return jsonify({'status': 'error', 'message': 'Asynchronous proctoring is disabled.'}), 404
+	try:
+		redis_client = _get_proctoring_redis()
+		owner = redis_client.get(f'proctoring:owner:{job_id}')
+		expected_owner = f"{session.get('uid')}:{request.args.get('testid', '')}"
+		if not owner or owner.decode('utf-8') != expected_owner:
+			return jsonify({'status': 'error', 'message': 'Proctoring job not found.'}), 404
+
+		job = _get_proctoring_celery().AsyncResult(job_id)
+		if job.state in {'PENDING', 'STARTED', 'RETRY'}:
+			return jsonify({'status': 'pending'}), 202, {'Retry-After': '1'}
+		if job.state == 'SUCCESS':
+			result = job.result
+			if result.get('uid') != session.get('uid') or result.get('testid') != request.args.get('testid'):
+				return jsonify({'status': 'error', 'message': 'Proctoring job not found.'}), 404
+			request.environ['proctor_cv_duration_ms'] = result.get('cv_duration_ms')
+			request.environ['proctor_queue_wait_ms'] = result.get('queue_wait_ms')
+			result.pop('uid', None)
+			result.pop('testid', None)
+			return jsonify(result)
+		redis_client.delete(f'proctoring:owner:{job_id}')
+		app.logger.error('Proctoring worker failed: job=%s state=%s', job_id, job.state)
 		return jsonify({
-			'status':           'success',
-			'logged':           logged,
-			'pid':              log_pid,
-			'mob_status':       mob_status,
-			'person_status':    person_status,
-			'user_move_updown': user_move1,
-			'user_move_lr':     user_move2,
-			'eye_movements':    eye_movements,
-			'head_yaw':         proctorData.get('head_yaw', 0),
-			'head_pitch':       proctorData.get('head_pitch', 0),
-			'head_confidence':  proctorData.get('head_confidence', 0),
-			'gaze_confidence':  proctorData.get('gaze_confidence', 0),
-			'audio_suspicious': audio_suspicious,
-			'warnings':         warnings,
-		})
-
-	return jsonify({'status': 'error', 'message': 'POST required'}), 405
+			'status': 'error',
+			'message': 'Proctoring analysis failed. Please keep your camera enabled and contact your instructor.',
+		}), 500
+	except Exception:
+		app.logger.exception('Could not read proctoring result: job=%s', job_id)
+		return jsonify({
+			'status': 'error',
+			'message': 'Proctoring result is temporarily unavailable. Please retry.',
+		}), 503, {'Retry-After': '2'}
 
 
 @app.route('/upload_audio_evidence', methods=['POST'])
 @student_required
 def upload_audio_evidence():
 	"""Receive an audio blob from the browser and store it linked to a log entry."""
+	fpath = None
+	cur = None
 	try:
 		testid     = request.form.get('testid', '').strip()
-		event_type = request.form.get('event_type', 'suspicious_audio').strip()
-		pid        = request.form.get('pid', '').strip()
+		voice_db   = request.form.get('voice_db', '0').strip()
 		audio_file = request.files.get('audio')
 
-		if not audio_file or not testid:
+		if not audio_file or not audio_file.filename or not testid:
 			return jsonify({'status': 'error', 'message': 'Missing audio or testid'}), 400
 
-		uid   = session.get('uid', 'unknown')
-		ts    = int(time.time())
-		fname = f"exam_{testid}_uid_{uid}_{ts}.webm"
+		uid   = session.get('uid')
+		email = session.get('email')
+		name  = session.get('name')
+		if not uid or not email or not name:
+			return jsonify({'status': 'error', 'message': 'Student session is incomplete'}), 401
+
+		try:
+			voice_db_val = float(voice_db)
+		except (TypeError, ValueError):
+			voice_db_val = 0.0
+		extension_by_type = {
+			'audio/mp4': '.mp4',
+			'audio/ogg': '.ogg',
+			'audio/webm': '.webm',
+			'audio/webm;codecs=opus': '.webm',
+		}
+		audio_mimetype = (audio_file.mimetype or '').lower().split(';', 1)[0]
+		extension = extension_by_type.get(audio_mimetype, '.webm')
+		fname = f"exam_{secure_filename(testid)}_uid_{uid}_{uuid.uuid4().hex}{extension}"
 		fpath = os.path.join(_AUDIO_EVIDENCE_DIR, fname)
+
+		_ensure_proctoring_audio_column()
+		cur = mysql.connection.cursor()
+		cur.execute(
+			'INSERT INTO proctoring_log '
+			'(email, name, test_id, voice_db, img_log, user_movements_updown, '
+			'user_movements_lr, user_movements_eyes, phone_detection, person_status, uid, audio_evidence) '
+			'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+			(email, name, testid, voice_db_val, '', 0, 0, 2, 0, 1, uid, fname),
+		)
+
 		audio_file.save(fpath)
-
-		# Link audio file path to the proctoring_log row if pid is known.
-		# The primary key is pid, not id.
-		if pid:
-			try:
-				_ensure_proctoring_audio_column()
-				cur = mysql.connection.cursor()
-				cur.execute(
-					'UPDATE proctoring_log SET audio_evidence = %s '
-					'WHERE pid = %s AND uid = %s',
-					(fname, pid, uid),
-				)
-				mysql.connection.commit()
-				cur.close()
-			except Exception as db_err:
-				app.logger.warning('audio_evidence update failed: %s', db_err)
-				try:
-					mysql.connection.rollback()
-				except Exception:
-					pass
-
-		app.logger.info('Audio evidence saved: %s (pid=%s, uid=%s, test=%s)', fname, pid, uid, testid)
+		mysql.connection.commit()
+		app.logger.info('Audio evidence saved: %s (uid=%s, test=%s, voice_db=%.2f)', fname, uid, testid, voice_db_val)
 		return jsonify({'status': 'success', 'file': fname})
 
 	except Exception as ae:
-		app.logger.error('upload_audio_evidence error: %s', ae)
+		try:
+			mysql.connection.rollback()
+		except Exception:
+			app.logger.exception('Audio evidence transaction rollback failed')
+		if fpath and os.path.exists(fpath):
+			try:
+				os.remove(fpath)
+			except OSError:
+				app.logger.exception('Could not remove unlinked audio file: %s', fpath)
+		app.logger.exception('upload_audio_evidence error: %s', ae)
 		return jsonify({'status': 'error', 'message': 'Audio upload failed.'}), 500
+	finally:
+		if cur is not None:
+			cur.close()
 
 @app.route('/window_event', methods=['GET', 'POST'])
 @student_required
@@ -932,9 +1191,7 @@ def livemonitoringtid():
 	results = cur.execute('SELECT * from teachers where email = %s and uid = %s and proctoring_type = 1', (session['email'], session['uid']))
 	if results > 0:
 		cresults = cur.fetchall()
-		now = datetime.now()
-		now = now.strftime("%Y-%m-%d %H:%M:%S")
-		now = datetime.strptime(now,"%Y-%m-%d %H:%M:%S")
+		now = exam_schedule_now()
 		testids = []
 		for a in cresults:
 			if datetime.strptime(str(a['start']),"%Y-%m-%d %H:%M:%S") <= now and datetime.strptime(str(a['end']),"%Y-%m-%d %H:%M:%S") >= now:
@@ -1582,7 +1839,7 @@ class QAUploadForm(FlaskForm):
 		try:
 			if not (form.start_date.data and form.start_time.data):
 				return
-			if datetime.strptime(str(form.start_date.data) + " " + str(form.start_time.data),"%Y-%m-%d %H:%M:%S") < datetime.now():
+			if datetime.strptime(str(form.start_date.data) + " " + str(form.start_time.data),"%Y-%m-%d %H:%M:%S") < exam_schedule_now():
 				raise ValidationError("Start date and time must not be earlier than current")
 		except ValidationError:
 			raise
@@ -1686,7 +1943,7 @@ class UploadForm(FlaskForm):
 		try:
 			if not (form.start_date.data and form.start_time.data):
 				return
-			if datetime.strptime(str(form.start_date.data) + " " + str(form.start_time.data),"%Y-%m-%d %H:%M:%S") < datetime.now():
+			if datetime.strptime(str(form.start_date.data) + " " + str(form.start_time.data),"%Y-%m-%d %H:%M:%S") < exam_schedule_now():
 				raise ValidationError("Start date and time must not be earlier than current")
 		except ValidationError:
 			raise
@@ -1805,7 +2062,7 @@ class PracUploadForm(FlaskForm):
 		try:
 			if not (form.start_date.data and form.start_time.data):
 				return
-			if datetime.strptime(str(form.start_date.data) + " " + str(form.start_time.data),"%Y-%m-%d %H:%M:%S") < datetime.now():
+			if datetime.strptime(str(form.start_date.data) + " " + str(form.start_time.data),"%Y-%m-%d %H:%M:%S") < exam_schedule_now():
 				raise ValidationError("Start date and time must not be earlier than current")
 		except ValidationError:
 			raise
@@ -2017,9 +2274,7 @@ def insertmarkstid():
 	results = cur.execute('SELECT * from teachers where show_ans = 0 and email = %s and uid = %s and (test_type = %s or test_type = %s)', (session['email'], session['uid'],"subjective","practical"))
 	if results > 0:
 		cresults = cur.fetchall()
-		now = datetime.now()
-		now = now.strftime("%Y-%m-%d %H:%M:%S")
-		now = datetime.strptime(now,"%Y-%m-%d %H:%M:%S")
+		now = exam_schedule_now()
 		testids = []
 		for a in cresults:
 			if datetime.strptime(str(a['end']),"%Y-%m-%d %H:%M:%S") < now:
@@ -2218,10 +2473,26 @@ def persondisplaystudentslogs(testid,email):
 @user_role_professor
 def audiodisplaystudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s', (testid, email))
-	callresults = cur.fetchall()
-	cur.close()
-	return render_template("audiodisplaystudentslogs.html", testid = testid, email = email, callresults = callresults)
+	try:
+		_ensure_proctoring_audio_column()
+		cur.execute(
+			'SELECT name, voice_db, audio_evidence, log_time '
+			'FROM proctoring_log WHERE test_id = %s AND email = %s ORDER BY log_time DESC',
+			(testid, email),
+		)
+		callresults = cur.fetchall()
+		audio_recordings = [row for row in callresults if row.get('audio_evidence')]
+		return render_template(
+			"audiodisplaystudentslogs.html",
+			testid=testid,
+			email=email,
+			callresults=audio_recordings,
+		)
+	except Exception:
+		app.logger.exception('Audio evidence page failed: exam=%s email=%s', testid, email)
+		raise
+	finally:
+		cur.close()
 
 @app.route('/wineventstudentslogs/<testid>/<email>', methods=['GET','POST'])
 @user_role_professor
@@ -2501,7 +2772,7 @@ def give_test():
 					proctortype = data['proctoring_type']
 					
 					if str(password).strip() == str(password_candidate).strip():
-						now = datetime.now()
+						now = exam_schedule_now()
 						def _to_dt(val):
 							if isinstance(val, datetime):
 								return val
@@ -2600,7 +2871,29 @@ def test(testid):
 			return render_template('testquiz.html', **data, answers=ex_answers, calc=ex_calc, subject=ex_subject, topic=ex_topic, tid=testid, proctortype=ex_proctortype)
 		else:
 			cur = mysql.connection.cursor()
-			flag = request.form['flag']
+			flag = request.form.get('flag')
+			if flag == 'start':
+				try:
+					cur.execute(
+						'SELECT qid, q, a, b, c, d, marks FROM questions'
+						' WHERE test_id = %s',
+						(testid,),
+					)
+					question_rows = cur.fetchall()
+					question_ids, questions = student_safe_question_payload(question_rows)
+					random.shuffle(question_ids)
+					cur.close()
+					return jsonify({'ids': question_ids, 'questions': questions})
+				except Exception:
+					cur.close()
+					app.logger.exception(
+						'Exam question preload failed: test=%s uid=%s',
+						testid, session.get('uid'),
+					)
+					return jsonify({
+						'status': 'error',
+						'message': 'Could not load exam questions. Please retry.',
+					}), 500
 			if flag == 'get':
 				num = request.form['no']
 				results = cur.execute('SELECT test_id,qid,q,a,b,c,d,ans,marks from questions where test_id = %s and qid =%s',(testid, num))
@@ -2612,25 +2905,32 @@ def test(testid):
 			elif flag=='mark':
 				qid = request.form.get('qid')
 				ans = request.form.get('ans')
-				if not qid or not ans:
+				if not qid:
 					cur.close()
-					return jsonify({'status': 'error', 'message': 'Missing qid or answer'}), 400
-				cur = mysql.connection.cursor()
+					return jsonify({'status': 'error', 'message': 'Missing qid'}), 400
 				try:
-					results = cur.execute('SELECT 1 from students where test_id = %s and qid = %s and email = %s and uid = %s', (testid, str(qid), session['email'], session['uid']))
-					if results > 0:
-						cur.execute('UPDATE students set ans = %s where test_id = %s and qid = %s and email = %s and uid = %s', (ans, testid, str(qid), session['email'], session['uid']))
-						action = 'updated'
+					if not ans:
+						cur.execute(
+							'DELETE FROM students WHERE test_id = %s AND qid = %s'
+							' AND email = %s AND uid = %s',
+							(testid, str(qid), session['email'], session['uid']),
+						)
+						mysql.connection.commit()
+						rowcount = cur.rowcount
+						action = 'deleted'
 					else:
-						cur.execute('INSERT INTO students(email,test_id,qid,ans,uid) values(%s,%s,%s,%s,%s)', (session['email'], testid, str(qid), ans, session['uid']))
-						action = 'inserted'
-					mysql.connection.commit()
-					rowcount = cur.rowcount
-					app.logger.info('Answer %s: uid=%s email=%s test=%s qid=%s ans=%s', action, session['uid'], session['email'], testid, qid, ans)
+						save_student_answer(
+							cur, session['email'], testid, session['uid'],
+							str(qid), ans,
+						)
+						action = 'saved'
+						rowcount = cur.rowcount
+						mysql.connection.commit()
+					app.logger.info('Answer %s: uid=%s email=%s test=%s qid=%s', action, session['uid'], session['email'], testid, qid)
 					return jsonify({'status': 'success', 'action': action, 'rows': rowcount})
 				except Exception as e:
 					mysql.connection.rollback()
-					app.logger.exception('Answer save error: uid=%s test=%s qid=%s ans=%s: %s', session.get('uid'), testid, qid, ans, e)
+					app.logger.exception('Answer save error: uid=%s test=%s qid=%s: %s', session.get('uid'), testid, qid, e)
 					return jsonify({'status': 'error', 'message': f'Failed to save answer: {e}'}), 500
 				finally:
 					cur.close()
@@ -2653,7 +2953,7 @@ def test(testid):
 						submitted_answers = json.loads(submitted_answers_raw or '{}')
 					except json.JSONDecodeError as decode_err:
 						raise ValueError(f'Invalid submitted answers: {decode_err}') from decode_err
-					saved_answers = _save_submitted_answers(
+					saved_answers = save_submitted_answers(
 						cur, session['email'], testid, session['uid'], submitted_answers
 					)
 
@@ -3395,8 +3695,9 @@ def cheat_report():
                 risk_level = 'Safe'
 
             students.append({
-                'email':          email,
-                'name':           name,
+                'email': email,
+                'name': name,
+                'enqueued_at': time.time(),
                 'total_snapshots': total_snaps,
                 'phone_flags':    phone_f,
                 'person_flags':   person_f,
