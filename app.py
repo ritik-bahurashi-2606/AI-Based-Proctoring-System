@@ -22,6 +22,8 @@ import operator
 import functools
 import math, random
 import csv
+import re
+from html import escape
 import cv2
 import numpy as np
 import json
@@ -34,10 +36,12 @@ from flask_session import Session
 from flask_cors import CORS, cross_origin
 import io
 import os
+import shutil
 import sys
 import time
 import uuid
 import hashlib
+from pathlib import Path
 from dotenv import load_dotenv
 from secure_exam import DEFAULT_POLICY, EVENT_SEVERITY, SecureExamService
 from proctoring_evidence import delete_evidence_image, save_evidence_image
@@ -2894,30 +2898,114 @@ def wineventstudentslogs(testid,email):
 @user_role_professor
 def share_details(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT * from teachers where test_id = %s and email = %s', (testid, email))
-	callresults = cur.fetchall()
-	cur.close()
+	try:
+		cur.execute(
+			'SELECT test_id, subject, topic, duration, `start`, `end`, password, neg_marks, calc '
+			'FROM teachers WHERE test_id = %s AND uid = %s',
+			(testid, session['uid']),
+		)
+		callresults = cur.fetchall()
+	finally:
+		cur.close()
+	if not callresults:
+		flash('Exam not found.', 'danger')
+		return redirect(url_for('disptests', email=session['email']))
 	return render_template("share_details.html", callresults = callresults)
 
-@app.route('/share_details_emails', methods=['GET','POST'])
+@app.route('/share_details_emails', methods=['POST'])
 @user_role_professor
 def share_details_emails():
-	if request.method == 'POST':
-		tid = request.form['tid']
-		subject = request.form['subject']
-		topic = request.form['topic']
-		duration = request.form['duration']
-		start = request.form['start']
-		end = request.form['end']
-		password = request.form['password']
-		neg_marks = request.form['neg_marks']
-		calc = request.form['calc']
-		emailssharelist = request.form['emailssharelist']
-		msg1 = Message('EXAM DETAILS - MyProctor.ai', sender = sender, recipients = [emailssharelist])
-		msg1.body = " ".join(["EXAM-ID:", tid, "SUBJECT:", subject, "TOPIC:", topic, "DURATION:", duration, "START", start, "END", end, "PASSWORD", password, "NEGATIVE MARKS in %:", neg_marks,"CALCULATOR ALLOWED:",calc ]) 
-		mail.send(msg1)
-		flash('Emails sended sucessfully!', 'success')
-	return render_template('share_details.html')
+	tid = request.form.get('tid', '').strip()
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute(
+			'SELECT test_id, subject, topic, duration, `start`, `end`, password, neg_marks, calc '
+			'FROM teachers WHERE test_id = %s AND uid = %s',
+			(tid, session['uid']),
+		)
+		exam = cur.fetchone()
+	finally:
+		cur.close()
+	if not exam:
+		flash('Exam not found.', 'danger')
+		return redirect(url_for('disptests', email=session['email']))
+
+	recipients = list(dict.fromkeys(
+		address.strip()
+		for address in request.form.get('emailssharelist', '').split(',')
+		if address.strip()
+	))
+	email_pattern = re.compile(
+		r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+		r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+		r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
+	)
+	if not recipients or any(
+		len(address) > 254 or not email_pattern.fullmatch(address)
+		for address in recipients
+	):
+		flash('Enter valid student email addresses separated by commas.', 'danger')
+		return redirect(url_for(
+			'share_details',
+			email=session['email'],
+			testid=tid,
+		))
+
+	details = [
+		('TEST ID', str(exam['test_id'])),
+		('SUBJECT', str(exam.get('subject') or '')),
+		('TOPIC', str(exam.get('topic') or '')),
+		('DURATION', f"{exam.get('duration') or ''} sec"),
+		('START', str(exam.get('start') or '')),
+		('END', str(exam.get('end') or '')),
+		('PASSWORD', str(exam.get('password') or '')),
+		('NEGATIVE MARKS', f"{exam.get('neg_marks') or 0} %"),
+		('CALCULATOR ALLOWED', 'YES' if int(exam.get('calc') or 0) == 1 else 'NO'),
+	]
+	message = Message(
+		'EXAM DETAILS - SafeExam',
+		sender=sender,
+		bcc=recipients,
+	)
+	message.body = 'EXAM DETAILS - SafeExam\n\n' + '\n'.join(
+		f'{label}: {value}' for label, value in details
+	)
+	table_rows = ''.join(
+		'<tr>'
+		'<th scope="row" style="padding:12px;text-align:left;font-weight:400;'
+		'border-bottom:1px solid #d8dee8;">'
+		f'{escape(label)}</th>'
+		'<td style="padding:12px;border-bottom:1px solid #d8dee8;">'
+		f'{escape(value)}</td>'
+		'</tr>'
+		for label, value in details
+	)
+	message.html = (
+		'<!doctype html><html><body style="margin:0;padding:24px;'
+		'font-family:Arial,Helvetica,sans-serif;color:#172b4d;">'
+		'<h2 style="margin:0 0 16px;font-size:20px;font-weight:500;">'
+		'EXAM DETAILS - SafeExam</h2>'
+		'<table role="presentation" cellpadding="0" cellspacing="0" '
+		'style="width:100%;max-width:640px;border-collapse:collapse;'
+		'border-top:1px solid #d8dee8;">'
+		f'{table_rows}'
+		'</table></body></html>'
+	)
+	try:
+		mail.send(message)
+	except Exception:
+		app.logger.exception(
+			'Could not send exam details: exam=%s professor_uid=%s recipient_count=%s',
+			tid, session['uid'], len(recipients),
+		)
+		flash('Could not send exam details. Check the email settings and try again.', 'danger')
+	else:
+		flash(f'Exam details sent to {len(recipients)} student(s).', 'success')
+	return redirect(url_for(
+		'share_details',
+		email=session['email'],
+		testid=tid,
+	))
 
 @app.route('/test_update_time', methods=['GET','POST'])
 @user_role_student
@@ -3720,12 +3808,170 @@ def student_results(email, testid):
 def disptests(email):
 	if email == session['email']:
 		cur = mysql.connection.cursor()
-		results = cur.execute('select * from teachers where email = %s and uid = %s', (email,session['uid']))
-		results = cur.fetchall()
+		try:
+			cur.execute(
+				'SELECT t.*, ('
+				't.`end` <= CURRENT_TIMESTAMP '
+				'AND NOT EXISTS ('
+				'SELECT 1 FROM studenttestinfo sti '
+				'WHERE sti.test_id = t.test_id AND sti.uid = t.uid '
+				'AND COALESCE(sti.completed, 0) = 0'
+				') '
+				'AND (SELECT COUNT(*) FROM teachers other '
+				'WHERE other.test_id = t.test_id) = 1'
+				') AS can_delete '
+				'FROM teachers t WHERE t.email = %s AND t.uid = %s',
+				(email, session['uid']),
+			)
+			results = cur.fetchall()
+		finally:
+			cur.close()
 		return render_template('disptests.html', tests=results)
 	else:
 		flash('You are not authorized', 'danger')
 		return redirect(url_for('professor_index'))
+
+@app.route('/<email>/delete_completed_exam/<testid>', methods=['POST'])
+@user_role_professor
+def delete_completed_exam(email, testid):
+	if email != session['email']:
+		flash('You are not authorized to delete this exam.', 'danger')
+		return redirect(url_for('professor_index'))
+
+	try:
+		secure_exam.ensure_tables()
+		_ensure_exam_results_table()
+		cur = mysql.connection.cursor()
+		try:
+			cur.execute(
+				'SELECT t.test_id, ('
+				't.`end` <= CURRENT_TIMESTAMP '
+				'AND NOT EXISTS ('
+				'SELECT 1 FROM studenttestinfo sti '
+				'WHERE sti.test_id = t.test_id AND sti.uid = t.uid '
+				'AND COALESCE(sti.completed, 0) = 0'
+				') '
+				'AND (SELECT COUNT(*) FROM teachers other '
+				'WHERE other.test_id = t.test_id) = 1'
+				') AS can_delete '
+				'FROM teachers t WHERE t.test_id = %s AND t.uid = %s '
+				'FOR UPDATE',
+				(testid, session['uid']),
+			)
+			exam = cur.fetchone()
+			if not exam or not exam.get('can_delete'):
+				mysql.connection.rollback()
+				flash(
+					'Only completed exams with no unfinished student attempts can be deleted.',
+					'warning',
+				)
+				return redirect(url_for('disptests', email=session['email']))
+
+			cur.execute(
+				'SELECT audio_evidence FROM proctoring_log WHERE test_id = %s',
+				(testid,),
+			)
+			audio_files = [
+				row.get('audio_evidence')
+				for row in (cur.fetchall() or [])
+				if row.get('audio_evidence')
+			]
+
+			delete_statements = [
+				('exam_results', 'exam_id', 'professor_id', session['uid']),
+				('longqa', 'test_id', 'uid', session['uid']),
+				('practicalqa', 'test_id', 'uid', session['uid']),
+				('questions', 'test_id', 'uid', session['uid']),
+				('longtest', 'test_id', None, None),
+				('practicaltest', 'test_id', None, None),
+				('students', 'test_id', None, None),
+				('studenttestinfo', 'test_id', None, None),
+				('proctoring_log', 'test_id', None, None),
+				('window_estimation_log', 'test_id', None, None),
+				('secure_exam_events', 'exam_id', None, None),
+				('secure_exam_sessions', 'exam_id', None, None),
+				('exam_security_policies', 'exam_id', 'professor_uid', session['uid']),
+			]
+			for table, exam_column, owner_column, owner_uid in delete_statements:
+				sql = f'DELETE FROM {table} WHERE {exam_column} = %s'
+				params = [testid]
+				if owner_column:
+					sql += f' AND {owner_column} = %s'
+					params.append(owner_uid)
+				cur.execute(sql, tuple(params))
+			cur.execute(
+				'DELETE FROM teachers WHERE test_id = %s AND uid = %s',
+				(testid, session['uid']),
+			)
+			mysql.connection.commit()
+		finally:
+			cur.close()
+	except Exception:
+		try:
+			mysql.connection.rollback()
+		except Exception:
+			app.logger.exception('Could not roll back completed exam deletion: %s', testid)
+		app.logger.exception(
+			'Could not delete completed exam: exam=%s professor_uid=%s',
+			testid, session['uid'],
+		)
+		flash('Could not delete the exam. No exam records were removed.', 'danger')
+		return redirect(url_for('disptests', email=session['email']))
+
+	evidence_cleanup_failed = False
+	exam_directory = secure_filename(testid)
+	if exam_directory == testid and exam_directory:
+		evidence_root = Path(_PROCTORING_EVIDENCE_DIR).resolve()
+		exam_evidence_dir = (evidence_root / exam_directory).resolve()
+		if exam_evidence_dir.parent == evidence_root:
+			try:
+				shutil.rmtree(exam_evidence_dir, ignore_errors=False)
+			except FileNotFoundError:
+				pass
+			except OSError:
+				evidence_cleanup_failed = True
+				app.logger.exception(
+					'Could not remove proctoring evidence directory for exam=%s',
+					testid,
+				)
+
+	audio_root = Path(_AUDIO_EVIDENCE_DIR).resolve()
+	for audio_file in set(audio_files):
+		if secure_filename(audio_file) != audio_file:
+			evidence_cleanup_failed = True
+			app.logger.error(
+				'Skipping unsafe audio evidence path for deleted exam=%s: %s',
+				testid, audio_file,
+			)
+			continue
+		audio_path = (audio_root / audio_file).resolve()
+		if audio_path.parent != audio_root:
+			evidence_cleanup_failed = True
+			app.logger.error(
+				'Skipping audio evidence path outside storage root for deleted exam=%s',
+				testid,
+			)
+			continue
+		try:
+			audio_path.unlink(missing_ok=True)
+		except OSError:
+			evidence_cleanup_failed = True
+			app.logger.exception(
+				'Could not remove audio evidence for deleted exam=%s',
+				testid,
+			)
+
+	if evidence_cleanup_failed:
+		flash(
+			'The exam and its database records were deleted, but some evidence files could not be removed. Check the server logs.',
+			'warning',
+		)
+	else:
+		flash(
+			'Completed exam and its related records and evidence were permanently deleted.',
+			'success',
+		)
+	return redirect(url_for('disptests', email=session['email']))
 
 
 
