@@ -223,13 +223,6 @@
       });
     });
 
-    document.addEventListener('keyup', (e) => {
-      if (e.key == 'PrintScreen') {
-        navigator.clipboard.writeText('');
-        alert('Screenshots disabled!');
-      }
-    });
-
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key == 'p') {
         alert('This section is not allowed to print or export to PDF');
@@ -344,14 +337,6 @@
           </a>
         </li>
 
-        <!-- Live Monitoring -->
-        <li class="nav-item">
-          <a class="nav-link" href="/livemonitoringtid">
-            <span class="sidebar-icon"><i class="fas fa-video"></i></span>
-            <span class="sidebar-text">Live Monitoring</span>
-          </a>
-        </li>
-
         <!-- Student Monitoring -->
         <li class="nav-item">
           <a class="nav-link" href="/viewstudentslogs">
@@ -365,14 +350,6 @@
           <a class="nav-link" href="/cheat_report">
             <span class="sidebar-icon"><i class="fas fa-user-secret"></i></span>
             <span class="sidebar-text">Cheating Report</span>
-          </a>
-        </li>
-
-        <!-- Insert Marks -->
-        <li class="nav-item">
-          <a class="nav-link" href="/insertmarkstid">
-            <span class="sidebar-icon"><i class="fas fa-pen-nib"></i></span>
-            <span class="sidebar-text">Insert Marks</span>
           </a>
         </li>
 

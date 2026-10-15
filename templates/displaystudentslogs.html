@@ -5,9 +5,10 @@
       <div class="card border-light shadow-sm components-section align-items-center d-flex  justify-content-center">
           <div class="card-body align-items-center d-flex justify-content-center">     
               <div class="row mb-4">
-                {% if callresults is not none %}
+                {% if callresults %}
                   <div class="col-lg-12 col-sm-16">
                     <h3 class="h3 text-center">STUDENT PROCTORING LOGS OF {{testid}} - {{name}} - {{email}} </h3>  
+                    <p class="text-center text-muted">Webcam frames are analyzed during the exam; screenshots are retained for flagged proctoring events only.</p>
                   </div>
                   <div class="card-body">
  <div class="row"> 
@@ -15,7 +16,16 @@
       <div class="col-6"> 
       <div class="card card-body shadow-sm mb-4">
         <div class="form-group">
-        <img src="data:image/jpeg;base64,{{ res['img_log'] }}" alt="img_data" width="320px" height="320px"  id="imgslot"/><br>
+        {% if res['evidence_url'] %}
+        <a href="{{ res['evidence_url'] }}" target="_blank" rel="noopener"><img src="{{ res['evidence_url'] }}" alt="Proctoring evidence" width="320px" height="320px" id="imgslot"/><br>Open full-size screenshot</a>
+        {% elif res['img_log'] %}
+        <a href="data:image/jpeg;base64,{{ res['img_log'] }}" target="_blank" rel="noopener"><img src="data:image/jpeg;base64,{{ res['img_log'] }}" alt="Legacy proctoring snapshot" width="320px" height="320px" id="imgslot"/><br>Open full-size screenshot</a>
+        {% else %}
+        <p class="text-muted">Screenshot unavailable for this event.</p>
+        {% endif %}<br>
+        {% if res['event_names'] %}<strong>Detected:</strong> {{ res['event_names'] }}{% endif %}
+        {% if res['detection_confidence'] %}<br><strong>Detection confidence:</strong> {{ (res['detection_confidence']|float * 100)|round(1) }}%{% endif %}
+        {% if res['evidence_status'] == 'failed' %}<br><strong class="text-danger">Evidence file could not be saved</strong>{% endif %}
         </div>
 
         <div class="form-group">
@@ -77,8 +87,11 @@
         </div>
 
         <div class="form-group">
-        {% if res['person_status'] == 1 %}
+        {% if res['person_status'] == 2 %}
         <h5 class="text-danger"><span class="fas fa-people-carry"></span> PERSON: MORE THAN 1 PERSON DETECTED</h5>
+
+        {% elif res['person_status'] == 0 %}
+        <h5 class="text-warning"><span class="fas fa-people-carry"></span> PERSON: NO PERSON DETECTED</h5>
 
         {% else %}
         <h5 class="h5"><span class="fas fa-people-carry"></span> PERSON: NORMAL</h5>
@@ -101,8 +114,9 @@
                     <div class="col-lg-12 col-sm-16">
                         <center><lottie-player src="https://assets7.lottiefiles.com/datafiles/vhvOcuUkH41HdrL/data.json"  background="transparent"  speed="1"  style="width: 300px; height: 300px;"  loop  autoplay></lottie-player></center>
                         <h3 class="h3 text-center">
-                            No Records Found!
+                            No flagged proctoring events or screenshots were recorded for this student and exam.
                         </h3>  
+                        <p class="text-center text-muted">Normal webcam frames are analyzed but not stored as screenshots.</p>
                       </div>
                     {% endif %}
           </div>

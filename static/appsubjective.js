@@ -35,7 +35,7 @@ window.onfocus = function(event) {
   var values = 0;
   var length = null;
 
-  function startStreaming() {
+  function legacyStartStreaming() {
   
     var mediaSupport = 'mediaDevices' in navigator;
     navigator.getUserMedia = navigator.getUserMedia ||
@@ -81,7 +81,7 @@ window.onfocus = function(event) {
     }
   }
   
-  function stopStreaming() {
+  function legacyStopStreaming() {
   
     if( null != cameraStream ) {
       var track = cameraStream.getTracks()[ 0 ];
@@ -91,7 +91,7 @@ window.onfocus = function(event) {
     }
   }
   
-  function captureSnapshot() {
+  function legacyCaptureSnapshot() {
   
     if( null != cameraStream ) {
       var ctx = capture.getContext( '2d' );
@@ -135,7 +135,7 @@ window.onfocus = function(event) {
                     }
                 });
         }
-      setTimeout(captureSnapshot, 2000); // Fixed: Increased frequency to 2 seconds
+      setTimeout(legacyCaptureSnapshot, 2000);
     }  
 
 $(document).ready( function() {
@@ -206,13 +206,6 @@ function submitformexam(){
       });
   });
 
-  document.addEventListener('keyup', (e) => {
-  if (e.key == 'PrintScreen') {
-  navigator.clipboard.writeText('');
-  alert('Screenshots disabled!');
-  }
-  });
-  
   document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key == 'p') {
   alert('This section is not allowed to print or export to PDF');

@@ -6,10 +6,11 @@ AI-Based Proctoring System is a Flask web application for conducting online exam
 
 - Online exam workflow for students and professors
 - Objective, subjective, and practical question support
-- AI-based proctoring with face, gaze, head movement, and mobile-phone detection
+- AI-based proctoring with face, gaze, head movement, mobile-phone, electronic-device, book, and multiple-person detection
 - Multiple-person detection during active exams
 - Liveness and face verification support
-- Copy-paste, tab/window switching, and screenshot/print-screen protection
+- Copy-paste, tab/window switching, and browser print deterrence (the browser
+  cannot disable operating-system screenshots)
 - Cheating logs, risk scoring, and timeline reports for professors
 - MySQL-backed data storage
 - Git LFS support for large model files
@@ -152,6 +153,14 @@ when initialization fails.
 | `PROCTOR_LANDMARK_BACKEND` | `auto` | `auto`, `mediapipe`, `tensorflow` | Face landmark detection for head/gaze signals |
 | `PROCTOR_FACE_MATCH_BACKEND` | `auto` | `auto`, `insightface`, `deepface` | Student login face matching |
 | `PROCTOR_OBJECT_BACKEND` | `auto` | `auto`, `ultralytics`, `yolov8`, `yolov11`, `yolov3` | Person/mobile object detection |
+| `PROCTOR_RESTRICTED_DEVICE_LABELS` | `tvmonitor,laptop,mouse,remote,keyboard,microwave,oven,toaster,refrigerator` | Comma-separated COCO labels | Object categories to include in the device warning |
+| `PROCTOR_OBJECT_PERSIST_SECONDS` | `2` | Seconds | Continuous time a phone/device/book must be visible before an event |
+| `PROCTOR_MULTIPLE_PERSONS_SECONDS` | `2` | Seconds | Continuous time multiple people must be visible before an event |
+| `PROCTOR_HEAD_YAW_THRESHOLD` | `50` | Degrees | Left/right head-turn threshold relative to calibration |
+| `PROCTOR_HEAD_PITCH_THRESHOLD` | `50` | Degrees | Up/down head-tilt threshold relative to calibration |
+| `PROCTOR_HEAD_ROLL_THRESHOLD` | `50` | Degrees | Sideways head-tilt threshold relative to calibration |
+| `PROCTOR_HEAD_TURN_SECONDS` | `2` | Seconds | Pose deviation persistence before warning/logging |
+| `PROCTORING_EVIDENCE_DIR` | `proctoring_evidence/` | Directory | Persistent JPEG evidence directory |
 
 Custom Ultralytics object models can be configured with:
 
@@ -172,6 +181,34 @@ first use. Downloaded runtime model caches such as `yolov8n.pt` and
 `models/models/` are intentionally ignored by Git; commit only source code,
 configuration templates, and intentionally managed model assets.
 
+The default COCO label set supports `person`, `cell phone`, and `laptop`
+detection. COCO's `clock` class is not a smartwatch class; an ordinary watch
+cannot reliably be classified as electronic from a webcam image, so watches
+are not treated as confirmed prohibited devices. Object detection annotates
+the captured frame with labels and confidence values. Person boxes with
+substantial overlap are counted once, and device/person events require the
+configured persistence interval.
+
+When a confirmed visual event is logged, its annotated JPEG is written under
+`PROCTORING_EVIDENCE_DIR/<exam-id>/`. Tab-switch and suspicious-audio logs also
+save the current webcam frame when one is available. These event images,
+relative paths, event metadata, confidence, and evidence status are saved in
+`proctoring_log`; routine analysis frames are not retained. Docker Compose
+mounts this directory from the project folder so evidence persists when
+containers are recreated. Professor-only evidence URLs verify exam ownership
+and the matching database record before serving the image. Existing
+`proctoring_log` tables are upgraded automatically; the repeatable SQL
+migration is also available at
+`DB/migrations/20261013_proctoring_evidence.sql`.
+
+The project requires its existing YOLOv3 COCO weights at
+`models/yolov3.weights`; Ultralytics' `yolov8n.pt` is downloaded on first use
+when that backend is selected and no local model is configured. The Ultralytics
+software is AGPL-3.0 licensed; review its current license and any applicable
+commercial licensing obligations before deployment. Verify the license and
+redistribution terms of any model weights supplied separately with the
+deployment.
+
 Gaze and head movement checks use a short per-student calibration window,
 smoothed pose values, and temporal confirmation. Brief glances and blinks are
 shown no persistent violation; a warning appears only after sustained deviation,
@@ -190,6 +227,16 @@ be produced.
 1. Create a MySQL database for the application.
 2. Import the schema from `DB/quizappstructure.sql`.
 3. Make sure the database name and credentials match your `.env` file.
+4. When upgrading an existing database, apply
+   `DB/migrations/20261010_proctoring_device_detection.sql` before opening the
+   professor cheating report. The application also adds this column when it
+   first processes a camera frame.
+
+Camera-based checks analyze images captured by the student's browser. Keep the
+camera unobstructed and frame every person and item clearly; detections depend
+on image quality and the COCO classes in the bundled object model. No
+browser-based system can reliably identify every possible prohibited item or
+prove misconduct from an image alone.
 
 ## Run
 

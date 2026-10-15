@@ -272,12 +272,6 @@ document.addEventListener('cut', e => {
         e.preventDefault();
     }
 });
-document.addEventListener('keyup', (e) => {
-    if (e.key == 'PrintScreen') {
-        navigator.clipboard.writeText('');
-        alert('Screenshots disabled!');
-    }
-});
 document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key == 'p') {
         e.preventDefault();

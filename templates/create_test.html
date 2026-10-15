@@ -36,7 +36,8 @@
       </div>
     </div>
     <div class="form-group">
-      {{render_field(form.password, class="form-control")}}
+      {{render_field(form.password, class="form-control", maxlength="6")}}
+      <small class="form-text text-muted">Exam password must be 3-6 characters long (maximum 6).</small>
     </div>
     <div class="form-group">
     	  {{form.hidden_tag()}}
@@ -51,9 +52,6 @@
     </div>
     <div class="form-group">
       {{render_field(form.calc)}}
-    </div>
-    <div>
-      {{render_field(form.proctor_type)}}
     </div>
     <p><input type="submit" class="btn btn-primary" value="Create Exam"></p>
   </form>

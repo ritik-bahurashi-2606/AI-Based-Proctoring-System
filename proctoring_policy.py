@@ -1,10 +1,10 @@
+import json
 import os
 import time
 from collections import defaultdict
+from statistics import median
 
 import base64
-import cv2
-import numpy as np
 
 
 PROCTOR_AUDIO_THRESHOLD = float(os.getenv("PROCTOR_AUDIO_THRESHOLD", "18"))
@@ -14,19 +14,22 @@ PROCTOR_HEAD_REPEAT_COUNT = int(os.getenv("PROCTOR_HEAD_REPEAT_COUNT", "3"))
 PROCTOR_EVENT_COOLDOWN_SECONDS = float(os.getenv("PROCTOR_EVENT_COOLDOWN_SECONDS", "8"))
 
 # New thresholds for improved detection
-PROCTOR_FACE_OUT_OF_FRAME_SECONDS = float(os.getenv("PROCTOR_FACE_OUT_OF_FRAME_SECONDS", "4"))
+PROCTOR_FACE_OUT_OF_FRAME_SECONDS = float(os.getenv("PROCTOR_FACE_OUT_OF_FRAME_SECONDS", "2"))
 PROCTOR_FACE_PARTIAL_SECONDS = float(os.getenv("PROCTOR_FACE_PARTIAL_SECONDS", "5"))
 PROCTOR_HEAD_MOVE_WINDOW_SECONDS = float(os.getenv("PROCTOR_HEAD_MOVE_WINDOW_SECONDS", "10"))
-PROCTOR_HEAD_YAW_THRESHOLD = float(os.getenv("PROCTOR_HEAD_YAW_THRESHOLD", "25.0")) # Degrees
-PROCTOR_HEAD_PITCH_THRESHOLD = float(os.getenv("PROCTOR_HEAD_PITCH_THRESHOLD", "20.0")) # Degrees
-PROCTOR_HEAD_TURN_SECONDS = float(os.getenv("PROCTOR_HEAD_TURN_SECONDS", "3.0"))
+PROCTOR_HEAD_YAW_THRESHOLD = float(os.getenv("PROCTOR_HEAD_YAW_THRESHOLD", "50.0"))
+PROCTOR_HEAD_PITCH_THRESHOLD = float(os.getenv("PROCTOR_HEAD_PITCH_THRESHOLD", "50.0"))
+PROCTOR_HEAD_ROLL_THRESHOLD = float(os.getenv("PROCTOR_HEAD_ROLL_THRESHOLD", "50.0"))
+PROCTOR_HEAD_TURN_SECONDS = float(os.getenv("PROCTOR_HEAD_TURN_SECONDS", "2.0"))
+PROCTOR_OBJECT_PERSIST_SECONDS = float(os.getenv("PROCTOR_OBJECT_PERSIST_SECONDS", "2.0"))
+PROCTOR_MULTIPLE_PERSONS_SECONDS = float(os.getenv("PROCTOR_MULTIPLE_PERSONS_SECONDS", "2.0"))
 PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW = int(os.getenv("PROCTOR_HEAD_MOVE_REPEAT_COUNT_NEW", "6"))
 PROCTOR_GAZE_WARNING_SECONDS = float(os.getenv("PROCTOR_GAZE_WARNING_SECONDS", "2.0"))
 PROCTOR_GAZE_DEVIATION_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_SECONDS", "2.0"))
 PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS = float(os.getenv("PROCTOR_GAZE_DEVIATION_WINDOW_SECONDS", "8"))
 PROCTOR_GAZE_DEVIATION_REPEAT_COUNT = int(os.getenv("PROCTOR_GAZE_DEVIATION_REPEAT_COUNT", "7"))
 PROCTOR_CALIBRATION_SECONDS = float(os.getenv("PROCTOR_CALIBRATION_SECONDS", "5"))
-PROCTOR_ABSENT_SECONDS = float(os.getenv("PROCTOR_ABSENT_SECONDS", "4"))
+PROCTOR_ABSENT_SECONDS = float(os.getenv("PROCTOR_ABSENT_SECONDS", "2"))
 PROCTOR_FACE_HIDDEN_SECONDS = float(os.getenv("PROCTOR_FACE_HIDDEN_SECONDS", "3"))
 YOLO_PHONE_SCORE_MIN = float(os.getenv("YOLO_PHONE_SCORE_MIN", "0.52"))
 YOLO_BOOK_SCORE_MIN = float(os.getenv("YOLO_BOOK_SCORE_MIN", "0.48"))
@@ -34,6 +37,7 @@ YOLO_PERSON_SCORE_MIN = float(os.getenv("YOLO_PERSON_SCORE_MIN", "0.38"))
 
 EVENT_RISK = {
     "mobile_phone": 25,
+    "electronic_device": 25,
     "book_detected": 22,
     "multiple_persons": 30,
     "student_absent": 30,
@@ -51,6 +55,7 @@ EVENT_RISK = {
     "head_turned_right": 10,
     "head_tilted_up": 10,
     "head_tilted_down": 10,
+    "head_tilted_sideways": 10,
     "prolonged_head_turn": 18,
     "repeated_head_movement": 15,
     "looking_up": 10,
@@ -61,6 +66,7 @@ EVENT_RISK = {
 
 EVENT_MESSAGES = {
     "mobile_phone": "Warning: Mobile phone detected.",
+    "electronic_device": "Warning: Electronic device detected.",
     "book_detected": "Warning: Book or document detected.",
     "multiple_persons": "Warning: Multiple persons detected.",
     "student_absent": "Warning: Face not visible. Stay in front of the camera.",
@@ -78,6 +84,7 @@ EVENT_MESSAGES = {
     "head_turned_right": "Warning: Head turned right detected.",
     "head_tilted_up": "Warning: Head tilted up detected.",
     "head_tilted_down": "Warning: Head tilted down detected.",
+    "head_tilted_sideways": "Warning: Your head is tilted significantly. Please face the screen.",
     "prolonged_head_turn": "Warning: Prolonged head turn away from screen.",
     "repeated_head_movement": "Warning: Suspicious repeated head movement.",
     "looking_up": "Warning: Looking up away from screen.",
@@ -106,6 +113,8 @@ _state = defaultdict(lambda: {
     "calibration_baseline": None,
     "absent_started_at": None,
     "face_hidden_started_at": None,
+    "persistent_event_started_at": {},
+    "persistent_event_reported": set(),
 })
 
 
@@ -127,6 +136,11 @@ def _mark_logged(state, event_type, now, duration=None):
 
 def _image_brightness(img_b64):
     try:
+        if not img_b64:
+            return None
+        import cv2
+        import numpy as np
+
         raw = img_b64 or ""
         if raw.startswith("TELEMETRY:"):
             raw = raw[len("TELEMETRY:") :]
@@ -148,6 +162,59 @@ def _event(event_type, confidence=1.0, risk=None, **kwargs):
     }
     event_data.update(kwargs)
     return event_data
+
+
+def calculate_risk_score(event_counts, tab_switch_count=0):
+    """Score events consistently; tab switches come from their dedicated counter."""
+    return sum(
+        max(0, int(count or 0)) * EVENT_RISK.get(
+            {"device": "electronic_device"}.get(event_type, event_type), 0
+        )
+        for event_type, count in event_counts.items()
+        if event_type != "tab_switch"
+    ) + max(0, int(tab_switch_count or 0)) * EVENT_RISK["tab_switch"]
+
+
+def count_proctoring_events(proctor_rows):
+    """Count JSON incidents and convert rows without event data to legacy events."""
+    event_counts = {}
+    for row in proctor_rows:
+        raw_event_data = row.get("event_data")
+        if raw_event_data:
+            try:
+                parsed = (
+                    json.loads(raw_event_data)
+                    if isinstance(raw_event_data, str)
+                    else raw_event_data
+                )
+            except (TypeError, ValueError):
+                parsed = {}
+            events = parsed.get("events", []) if isinstance(parsed, dict) else []
+            has_json_events = False
+            for event in events:
+                if isinstance(event, dict) and event.get("event_type"):
+                    event_type = event["event_type"]
+                    event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                    has_json_events = True
+            if has_json_events:
+                continue
+
+        fallback_events = {
+            "mobile_phone": int(row.get("phone_detection") or 0),
+            "electronic_device": int(row.get("device_detection") or 0),
+            "student_absent": int(int(row.get("person_status", 1) or 0) == 0),
+            "multiple_persons": int(int(row.get("person_status", 1) or 0) == 2),
+            "head_movement": int(
+                int(row.get("user_movements_lr") or 0) != 0
+                or int(row.get("user_movements_updown") or 0) != 0
+            ),
+            "looking_away": int(
+                int(row.get("user_movements_eyes", 2) or 2) not in (1, 2)
+            ),
+        }
+        for event_type, count in fallback_events.items():
+            event_counts[event_type] = event_counts.get(event_type, 0) + count
+    return event_counts
 
 
 def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
@@ -172,17 +239,91 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
     if brightness is not None and brightness < PROCTOR_LOW_LIGHT_THRESHOLD:
         candidates.append(_event("low_lighting", confidence=max(0.5, 1 - brightness / PROCTOR_LOW_LIGHT_THRESHOLD)))
 
+    presence_events = state["persistent_event_started_at"]
+    reported_events = state["persistent_event_reported"]
+
+    def persistent_object_event(event_type, present, confidence, persistence, **metadata):
+        if not present:
+            presence_events.pop(event_type, None)
+            reported_events.discard(event_type)
+            return
+        # Issue warning immediately for visible object/persons
+        warning_ev = _event(
+            event_type,
+            confidence=confidence,
+            **metadata,
+        )
+        if not any(w.get("event_type") == event_type for w in warnings):
+            warnings.append(warning_ev)
+
+        started_at = presence_events.setdefault(event_type, now)
+        duration = now - started_at
+        if duration >= persistence and event_type not in reported_events:
+            reported_events.add(event_type)
+            candidates.append(_event(
+                event_type,
+                confidence=confidence,
+                duration=duration,
+                **metadata,
+            ))
+
     if phone_status == 1:
         conf = float(proctor_data.get("phone_confidence", 0.95) or 0.95)
-        candidates.append(_event("mobile_phone", confidence=min(1.0, conf)))
+        persistent_object_event(
+            "mobile_phone", True, min(1.0, conf), PROCTOR_OBJECT_PERSIST_SECONDS
+        )
+    else:
+        persistent_object_event(
+            "mobile_phone", False, 0, PROCTOR_OBJECT_PERSIST_SECONDS
+        )
+
+    device_status = int(proctor_data.get("device_status", 0) or 0)
+    if device_status == 1:
+        device_names = sorted({
+            str(name).strip()
+            for name in proctor_data.get("device_names", [])
+            if str(name).strip()
+        })
+        message = "Warning: Electronic device detected."
+        if device_names:
+            message = f"Warning: Electronic device detected ({', '.join(device_names)})."
+        confidence = float(proctor_data.get("device_confidence", 0.75) or 0.75)
+        persistent_object_event(
+            "electronic_device",
+            True,
+            min(1.0, confidence),
+            PROCTOR_OBJECT_PERSIST_SECONDS,
+            message=message,
+            detected_devices=device_names,
+        )
+    else:
+        persistent_object_event(
+            "electronic_device", False, 0, PROCTOR_OBJECT_PERSIST_SECONDS
+        )
 
     book_status = int(proctor_data.get("book_status", 0) or 0)
     if book_status == 1:
         bconf = float(proctor_data.get("book_confidence", 0.75) or 0.75)
-        candidates.append(_event("book_detected", confidence=min(1.0, bconf)))
+        persistent_object_event(
+            "book_detected", True, min(1.0, bconf), PROCTOR_OBJECT_PERSIST_SECONDS
+        )
+    else:
+        persistent_object_event(
+            "book_detected", False, 0, PROCTOR_OBJECT_PERSIST_SECONDS
+        )
 
     if person_status == 2:
-        candidates.append(_event("multiple_persons", confidence=0.95))
+        persistent_object_event(
+            "multiple_persons",
+            True,
+            min(1.0, float(proctor_data.get("person_confidence", 0.95) or 0.95)),
+            PROCTOR_MULTIPLE_PERSONS_SECONDS,
+            person_count=int(proctor_data.get("person_count", 2) or 2),
+        )
+    else:
+        persistent_object_event(
+            "multiple_persons", False, 0, PROCTOR_MULTIPLE_PERSONS_SECONDS
+        )
 
     if person_status == 0:
         if state["absent_started_at"] is None:
@@ -231,21 +372,23 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
 
     # Establish a short personal baseline for head pose. Eye direction is
     # evaluated independently because it is already normalized by the tracker.
+    head_roll = float(proctor_data.get("head_roll", 0.0) or 0.0)
     if person_status == 1 and face_in_frame_status == 1:
         if state["calibration_started_at"] is None:
             state["calibration_started_at"] = now
         if not state["calibration_baseline"]:
-            state["calibration_samples"].append((head_yaw, head_pitch))
+            state["calibration_samples"].append((head_yaw, head_pitch, head_roll))
             if now - state["calibration_started_at"] >= PROCTOR_CALIBRATION_SECONDS:
                 samples = state["calibration_samples"]
                 state["calibration_baseline"] = (
-                    float(np.median([sample[0] for sample in samples])),
-                    float(np.median([sample[1] for sample in samples])),
+                    float(median([sample[0] for sample in samples])),
+                    float(median([sample[1] for sample in samples])),
+                    float(median([sample[2] for sample in samples])),
                 )
     elif state["calibration_started_at"] is None:
         state["calibration_started_at"] = now
 
-    baseline_yaw, baseline_pitch = state["calibration_baseline"] or (0.0, 0.0)
+    baseline_yaw, baseline_pitch, baseline_roll = state["calibration_baseline"] or (0.0, 0.0, 0.0)
     movement_evaluable = bool(state["calibration_baseline"])
     relative_yaw = head_yaw - baseline_yaw
     relative_pitch = head_pitch - baseline_pitch
@@ -253,9 +396,11 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
     # only compensates for a student's natural centered posture.
     effective_yaw = relative_yaw if movement_evaluable else head_yaw
     effective_pitch = relative_pitch if movement_evaluable else head_pitch
+    effective_roll = head_roll - baseline_roll if movement_evaluable else head_roll
     head_turned_away = (
         abs(effective_yaw) > PROCTOR_HEAD_YAW_THRESHOLD
         or abs(effective_pitch) > PROCTOR_HEAD_PITCH_THRESHOLD
+        or abs(effective_roll) > PROCTOR_HEAD_ROLL_THRESHOLD
     )
     if head_turned_away:
         if state["head_turn_prolong_start"] is None:
@@ -268,17 +413,31 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
                 head_event = "head_turned_right"
             elif effective_pitch > PROCTOR_HEAD_PITCH_THRESHOLD:
                 head_event = "head_tilted_up"
-            else:
+            elif effective_pitch < -PROCTOR_HEAD_PITCH_THRESHOLD:
                 head_event = "head_tilted_down"
+            else:
+                head_event = "head_tilted_sideways"
+            angle_ratio = max(
+                abs(effective_yaw) / PROCTOR_HEAD_YAW_THRESHOLD,
+                abs(effective_pitch) / PROCTOR_HEAD_PITCH_THRESHOLD,
+                abs(effective_roll) / PROCTOR_HEAD_ROLL_THRESHOLD,
+            )
+            if head_event == "head_tilted_sideways":
+                message = (
+                    "Warning: Your head is tilted significantly to the side. "
+                    "Please face the screen."
+                )
+            else:
+                message = EVENT_MESSAGES[head_event]
             candidates.append(
                 _event(
                     head_event,
-                    confidence=min(
-                        1.0,
-                        max(abs(effective_yaw) / PROCTOR_HEAD_YAW_THRESHOLD,
-                            abs(effective_pitch) / PROCTOR_HEAD_PITCH_THRESHOLD),
-                    ),
+                    confidence=min(1.0, angle_ratio),
                     duration=head_duration,
+                    message=message,
+                    yaw=round(effective_yaw, 2),
+                    pitch=round(effective_pitch, 2),
+                    roll=round(effective_roll, 2),
                 )
             )
     else:
@@ -318,6 +477,7 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
 
     INSTANT_TRANSIENT_EVENTS = {
         "head_turned_left", "head_turned_right", "head_tilted_up", "head_tilted_down",
+        "head_tilted_sideways",
         "looking_away", "looking_up", "looking_down"
     }
 

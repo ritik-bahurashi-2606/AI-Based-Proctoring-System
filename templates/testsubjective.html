@@ -69,9 +69,8 @@
   <div class="form-group">
     <div class="container" id ="videocheck" style="display: none;">
       <div class="justify-content-center align-items-center">
-      <video id="stream" width="320" height="320">
-        <canvas id="capture" width="320" height="320"></canvas>
-      </video>
+      <video id="stream" width="320" height="240" autoplay playsinline muted></video>
+      <canvas id="capture" width="640" height="480" style="display:none;"></canvas>
       </div>
       </div>
     </div>
@@ -90,15 +89,23 @@
   <script>
     var vid = "{{proctortypes}}";
 console.log(vid)
+var videoCheckEl = document.getElementById('videocheck');
+var liveCheckEl = document.getElementById('livecheck');
 if(vid == "0")
 {
-  document.getElementById('videocheck').style.display = "block"
-  startStreaming();
-  captureSnapshot();
+  if (videoCheckEl) videoCheckEl.style.display = "block";
+  if (liveCheckEl) liveCheckEl.style.display = "none";
 }
 else
 {
-  document.getElementById('livecheck').style.display = "block"
+  if (liveCheckEl) liveCheckEl.style.display = "block";
+  if (videoCheckEl) videoCheckEl.style.display = "none";
+}
+if (typeof window.startStreaming === 'function') {
+  window.startStreaming();
+}
+if (typeof window.captureSnapshot === 'function') {
+  window.captureSnapshot();
 }
     </script>
   <footer id="sticky-footer" class="py-4">

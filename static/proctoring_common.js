@@ -116,6 +116,13 @@
   function handleProctorResponse(response) {
     if (!response || response.status === 'error') return;
 
+    if (response.evidence_status === 'failed' || response.logging_status === 'failed') {
+      var diagnostic = response.evidence_message
+        || 'A proctoring event was detected but could not be saved. Please notify your instructor.';
+      console.error('Proctoring persistence failed:', diagnostic);
+      showProctorWarning(diagnostic, 'proctoring_persistence_failed');
+    }
+
     /* Show all server-determined warnings */
     var warnings = response.warnings || response.events || [];
     warnings.forEach(function (event) {
@@ -139,6 +146,7 @@
     formData.append('testid',     getTestId());
     formData.append('event_type', 'suspicious_audio');
     formData.append('voice_db', String(currentAudioAverage()));
+    formData.append('image_data', captureCurrentFrame());
     var extension = blob.type.indexOf('audio/mp4') === 0 ? 'mp4'
       : blob.type.indexOf('audio/ogg') === 0 ? 'ogg' : 'webm';
     formData.append('audio', blob, 'audio-evidence.' + extension);
@@ -150,6 +158,12 @@
       .then(function (data) {
         if (data && data.status === 'success' && data.file) {
           console.log('Audio evidence saved:', data.file);
+          if (data.evidence_status !== 'saved') {
+            showProctorWarning(
+              'Suspicious audio was logged, but its webcam screenshot could not be saved.',
+              'proctoring_persistence_failed'
+            );
+          }
         } else {
           throw new Error((data && data.message) || 'Server did not confirm audio evidence storage');
         }
@@ -230,6 +244,16 @@
 
   function currentAudioAverage() { return audioValues / (audioLength || 1); }
 
+  function captureCurrentFrame() {
+    var video = document.getElementById('stream');
+    if (!cameraStream || !video || video.videoWidth <= 0 || video.videoHeight <= 0) return '';
+    var canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.82).split(',', 2)[1] || '';
+  }
+
   /* ═══════════════════════════════════════════════════════════════════════
    *  CAMERA + MICROPHONE STREAM
    * ═══════════════════════════════════════════════════════════════════════ */
@@ -247,7 +271,16 @@
         window._proctoringStream = mediaStream;  // expose for app.js captureSnapshot
         if (streamEl) {
           streamEl.srcObject = mediaStream;
+          streamEl.onloadedmetadata = function () {
+            streamEl.play().catch(function (e) { console.warn('Video play failed:', e); });
+            if (typeof window.captureSnapshot === 'function') {
+              window.captureSnapshot();
+            }
+          };
           streamEl.play().catch(function (e) { console.warn('Video play failed:', e); });
+        }
+        if (typeof window.captureSnapshot === 'function') {
+          window.captureSnapshot();
         }
 
         /* ── Track lifecycle warnings ────────────────────────────────── */
@@ -414,7 +447,10 @@
     if (!captureActive) return;
     var streamEl = document.getElementById('stream');
     var capture  = document.getElementById('capture');
-    if (cameraStream && streamEl && capture) {
+    if (
+      cameraStream && streamEl && capture
+      && streamEl.readyState >= 2 && streamEl.videoWidth > 0
+    ) {
       var ctx = capture.getContext('2d');
       ctx.drawImage(streamEl, 0, 0, capture.width, capture.height);
       var dataUrl = capture.toDataURL('image/jpeg', 0.82);
@@ -454,7 +490,7 @@
       var tidv = getTestId();
       if (tidv) {
         $.ajax({
-          data: { testid: tidv, event_type: 'tab_switch' },
+          data: { testid: tidv, event_type: 'tab_switch', imgData: captureCurrentFrame() },
           type: 'POST', url: '/window_event', dataType: 'json',
           success: handleProctorResponse,
           error: function (xhr, s, e) { console.warn('window_event (tab) failed:', s, e); }
@@ -473,7 +509,7 @@
       var tidv = getTestId();
       if (!tidv) return;
       $.ajax({
-        data: { testid: tidv, event_type: 'browser_minimized' },
+        data: { testid: tidv, event_type: 'browser_minimized', imgData: captureCurrentFrame() },
         type: 'POST', url: '/window_event', dataType: 'json',
         success: handleProctorResponse,
         error: function (xhr, s, e) { console.warn('window_event (blur) failed:', s, e); }

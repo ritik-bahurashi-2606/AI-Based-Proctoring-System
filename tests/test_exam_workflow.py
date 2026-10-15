@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from exam_workflow import (
     exam_schedule_now,
+    exam_window_is_open,
     save_submitted_answers,
     student_safe_question_payload,
 )
@@ -14,6 +15,25 @@ def test_exam_schedule_clock_uses_india_local_wall_time():
 
     assert actual.tzinfo is None
     assert abs((actual - india_now.replace(tzinfo=None)).total_seconds()) < 2
+
+
+def test_exam_window_allows_five_minute_early_start_but_keeps_end_strict():
+    now = datetime(2026, 10, 10, 23, 30)
+    end = datetime(2026, 10, 11, 0, 30)
+
+    assert exam_window_is_open(
+        datetime(2026, 10, 13, 8, 37),
+        datetime(2026, 10, 13, 9, 30),
+        datetime(2026, 10, 13, 8, 42),
+    )
+    assert exam_window_is_open(datetime(2026, 10, 10, 23, 35), end, now)
+    assert exam_window_is_open(datetime(2026, 10, 10, 23, 34), end, datetime(2026, 10, 10, 23, 35))
+    assert not exam_window_is_open(datetime(2026, 10, 10, 23, 35, 1), end, now)
+    assert not exam_window_is_open(
+        datetime(2026, 10, 10, 23, 25),
+        datetime(2026, 10, 10, 23, 29, 59),
+        now,
+    )
 
 
 class RecordingCursor:

@@ -204,6 +204,16 @@
   }
   .cr-snapshot.flagged { border-color: #dc3545; }
   .cr-snapshot img { width: 100%; height: 130px; object-fit: cover; display: block; }
+  .cr-audio-placeholder {
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #555;
+    background: #f1f3f5;
+  }
+  .cr-snapshot audio { display: block; width: 100%; position: relative; z-index: 2; }
   .cr-snap-label {
     background: rgba(0,0,0,0.7);
     color: #fff;
@@ -213,6 +223,7 @@
     bottom: 0; left: 0; right: 0;
     text-align: center;
   }
+  .cr-snap-audio-label { position: static; }
   .cr-snap-flag {
     position: absolute;
     top: 5px; right: 5px;
@@ -310,6 +321,11 @@
     <div class="stat-lbl">Phone Detections</div>
   </div>
   <div class="cr-stat-card">
+    <div class="stat-icon">💻</div>
+    <div class="stat-val" style="color:#e8622a">{{ device_total }}</div>
+    <div class="stat-lbl">Electronic Devices</div>
+  </div>
+  <div class="cr-stat-card">
     <div class="stat-icon">🪟</div>
     <div class="stat-val" style="color:#6f42c1">{{ tab_total }}</div>
     <div class="stat-lbl">Tab Switches</div>
@@ -322,7 +338,7 @@
   <span><span class="risk-dot dot-safe"></span><strong>0–9</strong> Safe</span>
   <span><span class="risk-dot dot-moderate"></span><strong>10–29</strong> Moderate</span>
   <span><span class="risk-dot dot-high"></span><strong>30+</strong> High Risk</span>
-  <span style="margin-left:auto; color:#888;">Score = Phone×10 + Person×5 + Tab×3 + Head×1 + Eyes×1</span>
+  <span style="margin-left:auto; color:#888;">Score = Phone×25 + Device×25 + Person×30 + Tab×20 + Head×10 + Eyes×12 + Audio×15</span>
 </div>
 
 {% if students %}
@@ -337,6 +353,7 @@
         <th>Email</th>
         <th>Snapshots</th>
         <th>Phone 📱</th>
+        <th>Devices 💻</th>
         <th>Multi-Person 👤</th>
         <th>Head Movement</th>
         <th>Eyes Off</th>
@@ -356,6 +373,13 @@
         <td>
           {% if s.phone_flags > 0 %}
             <span style="color:#dc3545; font-weight:700;">{{ s.phone_flags }}</span>
+          {% else %}
+            <span style="color:#28a745;">0</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if s.device_flags > 0 %}
+            <span style="color:#dc3545; font-weight:700;">{{ s.device_flags }}</span>
           {% else %}
             <span style="color:#28a745;">0</span>
           {% endif %}
@@ -443,15 +467,18 @@ function showDetail(email, name, idx) {
   if (!sd) { body.innerHTML = '<p style="color:#aaa">No proctoring data found.</p>'; panel.classList.add('active'); scrollThere(); return; }
 
   var phoneColor = sd.phone_flags > 0 ? 'danger-val' : 'ok-val';
+  var deviceColor= sd.device_flags > 0 ? 'danger-val' : 'ok-val';
   var personColor= sd.person_flags > 0 ? 'danger-val' : 'ok-val';
   var tabColor   = sd.tab_switches > 0 ? 'warn-val' : 'ok-val';
 
   var html = '<div class="cr-mini-stats">'
     + miniCard(sd.total_snapshots, 'Total Snapshots', 'ok-val', 'fa-camera')
     + miniCard(sd.phone_flags, 'Phone Detected', phoneColor, 'fa-mobile-alt')
+    + miniCard(sd.device_flags, 'Electronic Devices', deviceColor, 'fa-laptop')
     + miniCard(sd.person_flags, 'Multi-Person', personColor, 'fa-user-friends')
-    + miniCard(sd.head_flags, 'Head Movements', sd.head_flags > 10 ? 'warn-val' : 'ok-val', 'fa-arrows-alt')
-    + miniCard(sd.eye_flags, 'Eyes Off-Screen', sd.eye_flags > 10 ? 'warn-val' : 'ok-val', 'fa-eye-slash')
+    + miniCard(sd.head_flags, 'Head Movements', sd.head_flags > 3 ? 'warn-val' : 'ok-val', 'fa-arrows-alt')
+    + miniCard(sd.eye_flags, 'Eyes Off-Screen', sd.eye_flags > 3 ? 'warn-val' : 'ok-val', 'fa-eye-slash')
+    + miniCard(sd.audio_flags || 0, 'Suspicious Audio', (sd.audio_flags || 0) > 0 ? 'warn-val' : 'ok-val', 'fa-microphone')
     + miniCard(sd.tab_switches, 'Tab Switches', tabColor, 'fa-window-restore')
     + miniCard(sd.risk_score, 'Risk Score', sd.risk_score >= 30 ? 'danger-val' : (sd.risk_score >= 10 ? 'warn-val' : 'ok-val'), 'fa-exclamation-triangle')
     + '</div>';
@@ -467,29 +494,44 @@ function showDetail(email, name, idx) {
 
   /* Snapshot gallery */
   if (sd.snapshots && sd.snapshots.length > 0) {
-    html += '<div class="cr-gallery-title"><i class="fas fa-images" style="color:#e8622a"></i> Captured Snapshots ('
+    html += '<div class="cr-gallery-title"><i class="fas fa-images" style="color:#e8622a"></i> Captured Evidence ('
          + sd.snapshots.length + ')</div><div class="cr-gallery">';
     for (var s = 0; s < sd.snapshots.length; s++) {
       var snap = sd.snapshots[s];
-      var flagged = (snap.phone || snap.person || snap.eye_off || snap.head_turn) ? ' flagged' : '';
+      var flagged = (snap.phone || snap.device || snap.person || snap.eye_off || snap.head_turn || snap.events || snap.audio_url) ? ' flagged' : '';
+      var snapSource = snap.evidence_url || (snap.img ? 'data:image/jpeg;base64,' + snap.img : '');
       var flags = [];
       if (snap.phone)     flags.push('📱');
+      if (snap.device)    flags.push('💻');
       if (snap.person)    flags.push('👤');
       if (snap.eye_off)   flags.push('👁️');
       if (snap.head_turn) flags.push('↔️');
       var flagStr = flags.join(' ');
-      html += '<div class="cr-snapshot' + flagged + '" onclick="openLightbox(\'' + snap.img + '\')">'
-           + '<img src="data:image/jpeg;base64,' + snap.img + '" alt="snap" onerror="this.src=\'\'">'
-           + '<div class="cr-snap-label">' + snap.time + (flagStr ? ' ' + flagStr : '') + '</div>'
+      html += '<div class="cr-snapshot' + flagged + '">'
+           + (snapSource
+               ? '<img src="' + snapSource + '" alt="Proctoring evidence" onerror="this.src=\'\'">'
+               : '<div class="cr-audio-placeholder"><i class="fas fa-microphone"></i> Audio evidence</div>')
+           + (snap.audio_url ? '<audio controls preload="metadata" src="' + snap.audio_url + '" onclick="event.stopPropagation()"></audio>' : '')
+           + '<div class="cr-snap-label' + (snap.audio_url ? ' cr-snap-audio-label' : '') + '">' + snap.time + (flagStr ? ' ' + flagStr : '')
+           + (snap.events ? '<br>' + snap.events : (snap.audio_url ? '<br>Suspicious audio' : ''))
+           + (snap.evidence_status === 'failed' ? '<br>Evidence file could not be saved' : '') + '</div>'
            + (flagged ? '<div class="cr-snap-flag"><i class="fas fa-exclamation"></i></div>' : '')
            + '</div>';
     }
     html += '</div>';
   } else {
-    html += '<p style="color:#aaa; margin-top:16px; font-size:0.88rem;"><i class="fas fa-camera-slash mr-1"></i>No snapshot images stored for this student.</p>';
+    html += '<p style="color:#777; margin-top:16px; font-size:0.88rem;"><i class="fas fa-camera-slash mr-1"></i>No webcam screenshots were captured for this student&apos;s saved events. Audio recordings and tab-switch timestamps are still available where recorded.</p>';
   }
 
   body.innerHTML = html;
+  var snapshotCards = body.querySelectorAll('.cr-snapshot');
+  snapshotCards.forEach(function(card, index) {
+    card.addEventListener('click', function() {
+      var snapshot = sd.snapshots[index];
+      var image = snapshot.evidence_url || (snapshot.img ? 'data:image/jpeg;base64,' + snapshot.img : '');
+      if (image) openLightbox(image);
+    });
+  });
   panel.classList.add('active');
   scrollThere();
 }
@@ -512,8 +554,8 @@ function scrollThere() {
   }, 80);
 }
 
-function openLightbox(b64) {
-  document.getElementById('cr-lightbox-img').src = 'data:image/jpeg;base64,' + b64;
+function openLightbox(source) {
+  document.getElementById('cr-lightbox-img').src = source;
   document.getElementById('cr-lightbox').classList.add('open');
 }
 function closeLightbox() {

@@ -8,6 +8,10 @@ def exam_schedule_now():
 	return datetime.now(_EXAM_TIMEZONE).replace(tzinfo=None)
 
 
+def exam_window_is_open(start, end, now):
+	return start <= now + timedelta(minutes=5) and end >= now
+
+
 def save_submitted_answers(cur, email, testid, student_uid, submitted_answers):
 	if not isinstance(submitted_answers, dict):
 		raise ValueError('Submitted answers must be an object')

@@ -452,17 +452,6 @@ function funSubmitExam()
       });
   });
 
-  var lastPrintScreenWarningAt = 0;
-  document.addEventListener('keyup', (e) => {
-  if (e.key == 'PrintScreen') {
-  var now = Date.now();
-  if (now - lastPrintScreenWarningAt < 3000) return;
-  lastPrintScreenWarningAt = now;
-  navigator.clipboard.writeText('');
-  alert('Screenshots disabled!');
-  }
-  });
-  
   document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key == 'p') {
   alert('This section is not allowed to print or export to PDF');

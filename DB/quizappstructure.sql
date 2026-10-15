@@ -134,9 +134,15 @@ CREATE TABLE `proctoring_log` (
   `user_movements_lr` tinyint(2) NOT NULL,
   `user_movements_eyes` tinyint(2) NOT NULL,
   `phone_detection` tinyint(2) NOT NULL,
+  `device_detection` tinyint(2) NOT NULL DEFAULT 0,
   `person_status` tinyint(2) NOT NULL,
   `audio_evidence` varchar(255) DEFAULT NULL,
   `proctoring_job_id` varchar(36) DEFAULT NULL,
+  `evidence_file` varchar(512) DEFAULT NULL,
+  `evidence_status` varchar(20) NOT NULL DEFAULT 'not_required',
+  `event_data` longtext DEFAULT NULL,
+  `detection_confidence` decimal(5,4) DEFAULT NULL,
+  `review_status` varchar(20) NOT NULL DEFAULT 'unreviewed',
   `log_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `uid` bigint(20) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;

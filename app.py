@@ -1,7 +1,7 @@
 from flask import Flask, request, render_template, flash, redirect, url_for,session, logging, send_file, send_from_directory, jsonify, Response, render_template_string
 from flask_login import LoginManager, login_user, logout_user, current_user, login_required, UserMixin
 from flask_mysqldb import MySQL
-from wtforms import Form, StringField, TextAreaField, PasswordField, validators, DateTimeField, BooleanField, IntegerField, DecimalField, HiddenField, SelectField, RadioField, SubmitField
+from wtforms import Form, StringField, TextAreaField, PasswordField, validators, DateTimeField, BooleanField, IntegerField, DecimalField, HiddenField, SelectField, SubmitField
 from flask_wtf import FlaskForm
 from flask_wtf.file import FileField, FileRequired, FileAllowed
 from flask_mail import Mail, Message
@@ -34,13 +34,16 @@ from flask_session import Session
 from flask_cors import CORS, cross_origin
 import io
 import os
+import sys
 import time
 import uuid
 import hashlib
 from dotenv import load_dotenv
 from secure_exam import DEFAULT_POLICY, EVENT_SEVERITY, SecureExamService
+from proctoring_evidence import delete_evidence_image, save_evidence_image
 from exam_workflow import (
 	exam_schedule_now,
+	exam_window_is_open,
 	save_student_answer,
 	save_submitted_answers,
 	student_safe_question_payload,
@@ -201,31 +204,29 @@ def _risk_level(score):
 
 
 def _get_cheating_risk(cur, email, testid):
+	_ensure_proctoring_device_column()
+	_ensure_proctoring_evidence_schema()
+	import proctoring_policy as pp
+
 	cur.execute("""
-		SELECT
-			COALESCE(SUM(phone_detection), 0) AS phone_flags,
-			COALESCE(SUM(CASE WHEN person_status IN (0, 2) THEN 1 ELSE 0 END), 0) AS person_flags,
-			COALESCE(SUM(CASE WHEN user_movements_lr NOT IN (0) THEN 1 ELSE 0 END), 0) AS head_flags_lr,
-			COALESCE(SUM(CASE WHEN user_movements_updown NOT IN (0) THEN 1 ELSE 0 END), 0) AS head_flags_ud,
-			COALESCE(SUM(CASE WHEN user_movements_eyes NOT IN (2) THEN 1 ELSE 0 END), 0) AS eye_flags
+		SELECT event_data, phone_detection, device_detection, person_status,
+		       user_movements_lr, user_movements_updown, user_movements_eyes
 		FROM proctoring_log
 		WHERE email = %s AND test_id = %s
 	""", (email, testid))
-	proctor = cur.fetchone() or {}
+	p_rows = cur.fetchall()
+
+	event_counts = pp.count_proctoring_events(p_rows)
+
 	cur.execute("""
 		SELECT COUNT(*) AS tab_switches
 		FROM window_estimation_log
 		WHERE email = %s AND test_id = %s
 	""", (email, testid))
 	tab = cur.fetchone() or {}
-	score = (
-		int(proctor.get('phone_flags') or 0) * 10
-		+ int(proctor.get('person_flags') or 0) * 5
-		+ int(tab.get('tab_switches') or 0) * 7
-		+ int(proctor.get('head_flags_lr') or 0)
-		+ int(proctor.get('head_flags_ud') or 0)
-		+ int(proctor.get('eye_flags') or 0)
-	)
+	tab_cnt = int(tab.get('tab_switches') or 0)
+
+	score = pp.calculate_risk_score(event_counts, tab_cnt)
 	return score, _risk_level(score)
 
 
@@ -656,6 +657,44 @@ _proctor_cooldowns = {}
 _PROCTOR_COOLDOWN_SECS = float(os.getenv('PROCTOR_COOLDOWN_SECS', '10'))
 _AUDIO_EVIDENCE_DIR = os.path.join(BASE_DIR, 'audio_evidence')
 os.makedirs(_AUDIO_EVIDENCE_DIR, exist_ok=True)
+_PROCTORING_EVIDENCE_DIR = os.path.abspath(os.getenv(
+	'PROCTORING_EVIDENCE_DIR',
+	os.path.join(BASE_DIR, 'proctoring_evidence'),
+))
+_proctoring_evidence_schema_checked = False
+
+
+def _ensure_proctoring_evidence_schema():
+	global _proctoring_evidence_schema_checked
+	if _proctoring_evidence_schema_checked:
+		return
+	columns = {
+		'evidence_file': 'varchar(512) DEFAULT NULL',
+		'evidence_status': "varchar(20) NOT NULL DEFAULT 'not_required'",
+		'event_data': 'longtext DEFAULT NULL',
+		'detection_confidence': 'decimal(5,4) DEFAULT NULL',
+		'review_status': "varchar(20) NOT NULL DEFAULT 'unreviewed'",
+	}
+	cur = mysql.connection.cursor()
+	try:
+		for column, definition in columns.items():
+			cur.execute(
+				'SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS '
+				'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s',
+				('proctoring_log', column),
+			)
+			if int((cur.fetchone() or {}).get('cnt', 0)) == 0:
+				cur.execute(
+					f'ALTER TABLE proctoring_log ADD COLUMN {column} {definition}'
+				)
+		mysql.connection.commit()
+		_proctoring_evidence_schema_checked = True
+	except Exception:
+		mysql.connection.rollback()
+		app.logger.exception('Could not ensure proctoring evidence schema')
+		raise
+	finally:
+		cur.close()
 
 
 def _ensure_proctoring_audio_column():
@@ -682,10 +721,54 @@ def _ensure_proctoring_audio_column():
 		cur.close()
 
 
+_proctoring_device_schema_checked = False
+
+
+def _ensure_proctoring_device_column():
+	global _proctoring_device_schema_checked
+	if _proctoring_device_schema_checked:
+		return
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute(
+			"SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS "
+			"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'proctoring_log' "
+			"AND COLUMN_NAME = 'device_detection'"
+		)
+		row = cur.fetchone() or {}
+		if int(row.get('cnt', 0)) == 0:
+			cur.execute(
+				'ALTER TABLE proctoring_log ADD COLUMN '
+				'device_detection tinyint(2) NOT NULL DEFAULT 0 AFTER phone_detection'
+			)
+		mysql.connection.commit()
+		_proctoring_device_schema_checked = True
+	except Exception:
+		mysql.connection.rollback()
+		app.logger.exception('Could not ensure proctoring_log.device_detection')
+		raise
+	finally:
+		cur.close()
+
+
 @app.route('/audio_evidence/<path:filename>')
-@professor_required
+@user_role_professor
 def audio_evidence(filename):
 	safe_filename = secure_filename(filename)
+	if not safe_filename or safe_filename != filename:
+		return jsonify({'status': 'error', 'message': 'Evidence not found.'}), 404
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute(
+			'SELECT 1 FROM proctoring_log pl '
+			'JOIN teachers t ON t.test_id = pl.test_id '
+			'WHERE pl.audio_evidence = %s AND t.uid = %s LIMIT 1',
+			(safe_filename, session['uid']),
+		)
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Evidence not found.'}), 404
+	finally:
+		cur.close()
 	mimetype_by_extension = {
 		'.mp4': 'audio/mp4',
 		'.ogg': 'audio/ogg',
@@ -698,6 +781,44 @@ def audio_evidence(filename):
 		as_attachment=False,
 		mimetype=mimetype_by_extension.get(extension.lower(), 'application/octet-stream'),
 	)
+
+
+@app.route('/proctoring_evidence/<testid>/<filename>')
+@user_role_professor
+def proctoring_evidence(testid, filename):
+	exam_directory = secure_filename(testid)
+	safe_filename = secure_filename(filename)
+	if not exam_directory or safe_filename != filename:
+		return jsonify({'status': 'error', 'message': 'Evidence not found.'}), 404
+
+	relative_path = f'{exam_directory}/{safe_filename}'
+	cur = mysql.connection.cursor()
+	try:
+		cur.execute(
+			'SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1',
+			(testid, session['uid']),
+		)
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Evidence not found.'}), 404
+		cur.execute(
+			'SELECT 1 FROM proctoring_log '
+			'WHERE test_id = %s AND evidence_file = %s LIMIT 1',
+			(testid, relative_path),
+		)
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Evidence not found.'}), 404
+	finally:
+		cur.close()
+
+	response = send_from_directory(
+		_PROCTORING_EVIDENCE_DIR,
+		relative_path,
+		mimetype='image/jpeg',
+		as_attachment=False,
+		max_age=0,
+	)
+	response.headers['Cache-Control'] = 'private, no-store'
+	return response
 
 
 def _is_event_allowed(uid, test_id, event_type, cooldown=None):
@@ -757,11 +878,91 @@ def _ensure_proctoring_job_id_column():
 		cur.close()
 
 
+def _save_event_snapshot(img_data, testid, uid, email, name, event_type):
+	"""Persist a webcam frame alongside a discrete proctoring event."""
+	if not img_data:
+		return False
+
+	_ensure_proctoring_device_column()
+	_ensure_proctoring_evidence_schema()
+	evidence_path = None
+	image_for_db = img_data
+	cur = None
+	try:
+		try:
+			evidence_path = save_evidence_image(
+				img_data,
+				uid,
+				testid,
+				[event_type],
+				_PROCTORING_EVIDENCE_DIR,
+			)
+		except OSError:
+			app.logger.exception(
+				'Could not save event screenshot: uid=%s test=%s event=%s',
+				uid, testid, event_type,
+			)
+		except ValueError:
+			app.logger.exception(
+				'Rejected invalid event screenshot: uid=%s test=%s event=%s',
+				uid, testid, event_type,
+			)
+			image_for_db = ''
+
+		event_data = json.dumps({
+			'events': [{
+				'event_type': event_type,
+				'message': f'Proctoring event: {event_type.replace("_", " ")}.',
+				'confidence': 1.0,
+				'risk_score': 0,
+			}],
+			'observed_at': datetime.now().astimezone().isoformat(),
+		})
+		cur = mysql.connection.cursor()
+		cur.execute(
+			'INSERT INTO proctoring_log '
+			'(email, name, test_id, voice_db, img_log, user_movements_updown, '
+			'user_movements_lr, user_movements_eyes, phone_detection, device_detection, '
+			'person_status, uid, evidence_file, evidence_status, event_data, '
+			'detection_confidence, review_status) '
+			'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+			(email, name, testid, 0, image_for_db, 0, 0, 2, 0, 0, 1, uid,
+			 evidence_path, 'saved' if image_for_db else 'failed',
+			 event_data, 1.0, 'unreviewed'),
+		)
+		mysql.connection.commit()
+		return bool(image_for_db)
+	except Exception:
+		try:
+			mysql.connection.rollback()
+		except Exception:
+			app.logger.exception('Event screenshot transaction rollback failed')
+		if evidence_path:
+			try:
+				delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
+			except OSError:
+				app.logger.exception(
+					'Could not remove unlinked event screenshot: uid=%s test=%s event=%s',
+					uid, testid, event_type,
+				)
+		app.logger.exception(
+			'Could not store event screenshot log: uid=%s test=%s event=%s',
+			uid, testid, event_type,
+		)
+		return False
+	finally:
+		if cur is not None:
+			cur.close()
+
+
 def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_id=None):
 	cv_started_at = time.perf_counter()
+	if BASE_DIR not in sys.path:
+		sys.path.insert(0, BASE_DIR)
 	import camera
 	proctor_data = camera.get_frame(img_data)
 	cv_duration_ms = (time.perf_counter() - cv_started_at) * 1000
+	_ensure_proctoring_device_column()
 
 	try:
 		vdb_val = float(voice_db)
@@ -778,44 +979,113 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 
 	logged = False
 	log_pid = None
+	evidence_status = 'not_required'
+	logging_status = 'not_required'
+	evidence_path = None
 	if should_log and logged_events:
 		cur = None
 		try:
+			_ensure_proctoring_evidence_schema()
+			event_types = sorted({event['event_type'] for event in logged_events})
+			detection_confidence = max(
+				float(event.get('confidence', 0.0) or 0.0) for event in logged_events
+			)
+			event_data = json.dumps({
+				'events': logged_events,
+				'observed_at': datetime.now().astimezone().isoformat(),
+				'person_count': proctor_data.get('person_count'),
+				'person_confidence': proctor_data.get('person_confidence'),
+				'head_yaw': proctor_data.get('head_yaw'),
+				'head_pitch': proctor_data.get('head_pitch'),
+				'head_roll': proctor_data.get('head_roll'),
+				'device_names': proctor_data.get('device_names', []),
+			})
+			try:
+				evidence_path = save_evidence_image(
+					proctor_data['jpg_as_text'],
+					uid,
+					testid,
+					event_types,
+					_PROCTORING_EVIDENCE_DIR,
+				)
+				evidence_status = 'saved_pending_database'
+			except (OSError, ValueError):
+				evidence_status = 'failed'
+				app.logger.exception(
+					'Could not save proctoring evidence: uid=%s test=%s events=%s',
+					uid, testid, ','.join(event_types),
+				)
+
 			cur = mysql.connection.cursor()
 			if job_id:
 				_ensure_proctoring_job_id_column()
 				rows = cur.execute(
 					'INSERT INTO proctoring_log '
 					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
-					'user_movements_lr, user_movements_eyes, phone_detection, person_status, '
-					'uid, proctoring_job_id) '
-					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) '
-					'ON DUPLICATE KEY UPDATE pid = LAST_INSERT_ID(pid)',
+					'user_movements_lr, user_movements_eyes, phone_detection, device_detection, person_status, '
+					'uid, proctoring_job_id, evidence_file, evidence_status, event_data, detection_confidence, review_status) '
+					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) '
+					'ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',
 					(email, name, testid, vdb_val, proctor_data['jpg_as_text'],
 					 proctor_data['user_move1'], proctor_data['user_move2'],
 					 proctor_data['eye_movements'], proctor_data['mob_status'],
-					 proctor_data['person_status'], uid, job_id),
+					 proctor_data['device_status'], proctor_data['person_status'], uid, job_id,
+					 evidence_path, 'saved' if evidence_path else 'failed',
+					 event_data, detection_confidence, 'unreviewed'),
 				)
 			else:
 				rows = cur.execute(
 					'INSERT INTO proctoring_log '
 					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
-					'user_movements_lr, user_movements_eyes, phone_detection, person_status, uid) '
-					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+					'user_movements_lr, user_movements_eyes, phone_detection, device_detection, person_status, '
+					'uid, evidence_file, evidence_status, event_data, detection_confidence, review_status) '
+					'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
 					(email, name, testid, vdb_val, proctor_data['jpg_as_text'],
 					 proctor_data['user_move1'], proctor_data['user_move2'],
 					 proctor_data['eye_movements'], proctor_data['mob_status'],
-					 proctor_data['person_status'], uid),
+					 proctor_data['device_status'], proctor_data['person_status'], uid,
+					 evidence_path, 'saved' if evidence_path else 'failed',
+					 event_data, detection_confidence, 'unreviewed'),
 				)
 			mysql.connection.commit()
 			log_pid = cur.lastrowid
-			logged = rows > 0
+			logged = rows > 0 or bool(log_pid)
+			logging_status = 'saved' if logged else 'failed'
+			if job_id and log_pid:
+				cur.execute(
+					'SELECT evidence_file, evidence_status FROM proctoring_log WHERE id = %s',
+					(log_pid,),
+				)
+				stored_row = cur.fetchone() or {}
+				stored_evidence_path = stored_row.get('evidence_file')
+				if stored_evidence_path != evidence_path and evidence_path:
+					try:
+						delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
+					except OSError:
+						app.logger.exception(
+							'Could not remove duplicate proctoring evidence: uid=%s test=%s',
+							uid, testid,
+						)
+				evidence_path = stored_evidence_path
+				evidence_status = (
+					'saved'
+					if evidence_path and os.path.isfile(
+						os.path.join(_PROCTORING_EVIDENCE_DIR, *evidence_path.split('/'))
+					)
+					else 'failed'
+				)
+			elif logged and evidence_path:
+				evidence_status = 'saved'
+			elif evidence_path:
+				delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
+				evidence_path = None
 			app.logger.info(
-				'Proctoring log: uid=%s test=%s event=%s yaw=%.1f pitch=%.1f eyes=%d',
-				uid, testid, logged_events[0]['event_type'],
+				'Proctoring log: uid=%s test=%s events=%s yaw=%.1f pitch=%.1f eyes=%d evidence=%s',
+				uid, testid, ','.join(event_types),
 				proctor_data.get('head_yaw', 0),
 				proctor_data.get('head_pitch', 0),
 				proctor_data['eye_movements'],
+				evidence_status,
 			)
 		except Exception:
 			app.logger.exception('proctoring_log insert failed: uid=%s test=%s', uid, testid)
@@ -823,6 +1093,16 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 				mysql.connection.rollback()
 			except Exception:
 				app.logger.exception('Proctoring log transaction rollback failed')
+			if evidence_path:
+				try:
+					delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
+				except OSError:
+					app.logger.exception(
+						'Could not remove uncommitted evidence: uid=%s test=%s', uid, testid
+					)
+				evidence_path = None
+			logging_status = 'failed'
+			evidence_status = 'failed'
 		finally:
 			if cur is not None:
 				cur.close()
@@ -831,7 +1111,18 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 		'status': 'success',
 		'logged': logged,
 		'pid': log_pid,
+		'logging_status': logging_status,
+		'evidence_status': evidence_status,
+		'evidence_message': (
+			'An event was detected, but its evidence or log could not be saved. '
+			'Please notify your instructor.'
+			if should_log and (logging_status != 'saved' or evidence_status != 'saved')
+			else None
+		),
+		'events': logged_events,
 		'mob_status': proctor_data['mob_status'],
+		'device_status': proctor_data['device_status'],
+		'device_names': proctor_data['device_names'],
 		'person_status': proctor_data['person_status'],
 		'user_move_updown': proctor_data['user_move1'],
 		'user_move_lr': proctor_data['user_move2'],
@@ -1056,10 +1347,12 @@ def proctoring_status(job_id):
 def upload_audio_evidence():
 	"""Receive an audio blob from the browser and store it linked to a log entry."""
 	fpath = None
+	evidence_path = None
 	cur = None
 	try:
 		testid     = request.form.get('testid', '').strip()
 		voice_db   = request.form.get('voice_db', '0').strip()
+		image_data = request.form.get('image_data', '').strip()
 		audio_file = request.files.get('audio')
 
 		if not audio_file or not audio_file.filename or not testid:
@@ -1087,19 +1380,55 @@ def upload_audio_evidence():
 		fpath = os.path.join(_AUDIO_EVIDENCE_DIR, fname)
 
 		_ensure_proctoring_audio_column()
+		_ensure_proctoring_device_column()
+		_ensure_proctoring_evidence_schema()
+		image_for_db = image_data
+		if image_data:
+			try:
+				evidence_path = save_evidence_image(
+					image_data, uid, testid, ['suspicious_audio'], _PROCTORING_EVIDENCE_DIR
+				)
+			except OSError:
+				app.logger.exception(
+					'Could not save suspicious-audio screenshot: uid=%s test=%s',
+					uid, testid,
+				)
+			except ValueError:
+				app.logger.exception(
+					'Rejected invalid suspicious-audio screenshot: uid=%s test=%s',
+					uid, testid,
+				)
+				image_for_db = ''
 		cur = mysql.connection.cursor()
 		cur.execute(
 			'INSERT INTO proctoring_log '
 			'(email, name, test_id, voice_db, img_log, user_movements_updown, '
-			'user_movements_lr, user_movements_eyes, phone_detection, person_status, uid, audio_evidence) '
-			'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
-			(email, name, testid, voice_db_val, '', 0, 0, 2, 0, 1, uid, fname),
+			'user_movements_lr, user_movements_eyes, phone_detection, device_detection, '
+			'person_status, uid, audio_evidence, evidence_file, evidence_status, event_data, '
+			'detection_confidence, review_status) '
+			'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)',
+			(email, name, testid, voice_db_val, image_for_db, 0, 0, 2, 0, 0, 1, uid, fname,
+			 evidence_path, 'saved' if image_for_db else 'failed',
+			 json.dumps({
+				 'events': [{
+					 'event_type': 'suspicious_audio',
+					 'message': 'Suspicious audio activity detected.',
+					 'confidence': 1.0,
+					 'risk_score': 15,
+				 }],
+				 'observed_at': datetime.now().astimezone().isoformat(),
+			 }),
+			 1.0, 'unreviewed'),
 		)
 
 		audio_file.save(fpath)
 		mysql.connection.commit()
 		app.logger.info('Audio evidence saved: %s (uid=%s, test=%s, voice_db=%.2f)', fname, uid, testid, voice_db_val)
-		return jsonify({'status': 'success', 'file': fname})
+		return jsonify({
+			'status': 'success',
+			'file': fname,
+			'evidence_status': 'saved' if image_for_db else 'failed',
+		})
 
 	except Exception as ae:
 		try:
@@ -1111,6 +1440,11 @@ def upload_audio_evidence():
 				os.remove(fpath)
 			except OSError:
 				app.logger.exception('Could not remove unlinked audio file: %s', fpath)
+		if evidence_path:
+			try:
+				delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
+			except OSError:
+				app.logger.exception('Could not remove unlinked audio screenshot: %s', evidence_path)
 		app.logger.exception('upload_audio_evidence error: %s', ae)
 		return jsonify({'status': 'error', 'message': 'Audio upload failed.'}), 500
 	finally:
@@ -1131,6 +1465,7 @@ def window_event():
 			import proctoring_policy as pp
 			uid = session.get('uid')
 			pol = pp.evaluate_window_event(f"{uid}_{testid}", event_type)
+			evidence_status = 'not_required'
 
 			if pol['should_log']:
 				cur = mysql.connection.cursor()
@@ -1143,10 +1478,30 @@ def window_event():
 				mysql.connection.commit()
 				cur.close()
 				app.logger.info('window_event logged: uid=%s test=%s type=%s', uid, testid, event_type)
+				if request.form.get('imgData'):
+					evidence_status = (
+						'saved'
+						if _save_event_snapshot(
+							request.form['imgData'],
+							testid,
+							uid,
+							session.get('email'),
+							session.get('name'),
+							event_type,
+						)
+						else 'failed'
+					)
+				else:
+					evidence_status = 'failed'
 
 			return jsonify({
 				'status':   'success',
 				'logged':   pol['should_log'],
+				'evidence_status': evidence_status,
+				'evidence_message': (
+					'The event was logged, but its webcam screenshot could not be saved.'
+					if evidence_status == 'failed' else None
+				),
 				'warnings': pol.get('warnings', []),
 			})
 		except Exception as we:
@@ -1811,7 +2166,6 @@ class QAUploadForm(FlaskForm):
 	end_time = TimeField('End Time', default=datetime.utcnow()+timedelta(hours=5.5))
 	duration = IntegerField('Duration(in min)')
 	password = PasswordField('Exam Password', [validators.Length(min=3, max=6)])
-	proctor_type = RadioField('Proctoring Type', choices=[('0','Automatic Monitoring'),('1','Live Monitoring')])
 
 	def validate_end_date(form, field):
 		try:
@@ -1880,7 +2234,7 @@ def create_test_lqa():
 				password = form.password.data
 				subject = form.subject.data
 				topic = form.topic.data
-				proctor_type = form.proctor_type.data
+				proctor_type = '0'
 				cur.execute('INSERT INTO teachers (email, test_id, test_type, start, end, duration, show_ans, password, subject, topic, neg_marks, calc, proctoring_type, uid) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
 					(dict(session)['email'], test_id, "subjective", start_date_time, end_date_time, duration, 0, password, subject, topic, 0, 0, proctor_type, session['uid']))
 				mysql.connection.commit()
@@ -1915,7 +2269,6 @@ class UploadForm(FlaskForm):
 	neg_mark = DecimalField('Enable negative marking in % ', validators=[NumberRange(min=0, max=100)])
 	duration = IntegerField('Duration(in min)')
 	password = PasswordField('Exam Password', [validators.Length(min=3, max=6)])
-	proctor_type = RadioField('Proctoring Type', choices=[('0','Automatic Monitoring'),('1','Live Monitoring')])
 
 	def validate_end_date(form, field):
 		try:
@@ -1997,7 +2350,7 @@ def create_test():
 				password = form.password.data
 				subject = form.subject.data
 				topic = form.topic.data
-				proctor_type = form.proctor_type.data
+				proctor_type = '0'
 				cur.execute('INSERT INTO teachers (email, test_id, test_type, start, end, duration, show_ans, password, subject, topic, neg_marks, calc,proctoring_type, uid) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
 					(dict(session)['email'], test_id, "objective", start_date_time, end_date_time, duration, 1, password, subject, topic, neg_mark, calc, proctor_type, session['uid']))
 				mysql.connection.commit()
@@ -2033,8 +2386,7 @@ class PracUploadForm(FlaskForm):
 	compiler = SelectField(u'Compiler/Interpreter', choices=[('11', 'C'), ('27', 'C#'), ('1', 'C++'),('114', 'Go'),('10', 'Java'),('47', 'Kotlin'),('56', 'Node.js'),
 	('43', 'Objective-C'),('29', 'PHP'),('54', 'Perl-6'),('116', 'Python 3x'),('117', 'R'),('17', 'Ruby'),('93', 'Rust'),('52', 'SQLite-queries'),('40', 'SQLite-schema'),
 	('39', 'Scala'),('85', 'Swift'),('57', 'TypeScript')])
-	password = PasswordField('Exam Password', [validators.Length(min=3, max=10)])
-	proctor_type = RadioField('Proctoring Type', choices=[('0','Automatic Monitoring'),('1','Live Monitoring')])
+	password = PasswordField('Exam Password', [validators.Length(min=3, max=6)])
 
 	def validate_end_date(form, field):
 		try:
@@ -2111,7 +2463,7 @@ def create_test_pqa():
 				password = form.password.data
 				subject = form.subject.data
 				topic = form.topic.data
-				proctor_type = form.proctor_type.data
+				proctor_type = '0'
 				cur.execute('INSERT INTO teachers (email, test_id, test_type, start, end, duration, show_ans, password, subject, topic, neg_marks, calc, proctoring_type, uid) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
 					(dict(session)['email'], test_id, "practical", start_date_time, end_date_time, duration, 0, password, subject, topic, 0, 0, proctor_type, session['uid']))
 				mysql.connection.commit()
@@ -2414,7 +2766,7 @@ def countMobStudentslogs(testid,email):
 
 def countMTOPstudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT COUNT(*) as percount from proctoring_log where test_id = %s and email = %s and person_status IN (0,2)', (testid, email))
+	cur.execute('SELECT COUNT(*) as percount from proctoring_log where test_id = %s and email = %s and person_status = 2', (testid, email))
 	callresults = cur.fetchall()
 	cur.close()
 	perc = [i['percount'] for i in callresults]
@@ -2427,6 +2779,29 @@ def countTotalstudentslogs(testid,email):
 	cur.close()
 	tot = [i['total'] for i in callresults]
 	return tot
+
+
+def _prepare_proctoring_log_rows(rows, testid):
+	for row in rows:
+		try:
+			metadata = json.loads(row.get('event_data') or '{}')
+		except (TypeError, ValueError):
+			metadata = {}
+		row['event_names'] = ', '.join(
+			str(event.get('event_type', '')).replace('_', ' ')
+			for event in metadata.get('events', [])
+			if isinstance(event, dict) and event.get('event_type')
+		)
+		evidence_file = row.get('evidence_file')
+		row['evidence_url'] = (
+			url_for(
+				'proctoring_evidence',
+				testid=testid,
+				filename=str(evidence_file).split('/')[-1],
+			)
+			if evidence_file else None
+		)
+	return rows
 
 @app.route('/studentmonitoringstats/<testid>/<email>', methods=['GET','POST'])
 @user_role_professor
@@ -2446,27 +2821,42 @@ def ajaxstudentmonitoringstats(testid,email):
 @user_role_professor
 def displaystudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s', (testid, email))
-	callresults = cur.fetchall()
-	cur.close()
+	try:
+		cur.execute('SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1', (testid, session['uid']))
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Exam not found.'}), 404
+		cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s', (testid, email))
+		callresults = _prepare_proctoring_log_rows(cur.fetchall(), testid)
+	finally:
+		cur.close()
 	return render_template("displaystudentslogs.html", testid = testid, email = email, callresults = callresults)
 
 @app.route('/mobdisplaystudentslogs/<testid>/<email>', methods=['GET','POST'])
 @user_role_professor
 def mobdisplaystudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s and phone_detection = 1', (testid, email))
-	callresults = cur.fetchall()
-	cur.close()
+	try:
+		cur.execute('SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1', (testid, session['uid']))
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Exam not found.'}), 404
+		cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s and phone_detection = 1', (testid, email))
+		callresults = _prepare_proctoring_log_rows(cur.fetchall(), testid)
+	finally:
+		cur.close()
 	return render_template("mobdisplaystudentslogs.html", testid = testid, email = email, callresults = callresults)
 
 @app.route('/persondisplaystudentslogs/<testid>/<email>', methods=['GET','POST'])
 @user_role_professor
 def persondisplaystudentslogs(testid,email):
 	cur = mysql.connection.cursor()
-	cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s and person_status IN (0,2)', (testid, email))
-	callresults = cur.fetchall()
-	cur.close()
+	try:
+		cur.execute('SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1', (testid, session['uid']))
+		if not cur.fetchone():
+			return jsonify({'status': 'error', 'message': 'Exam not found.'}), 404
+		cur.execute('SELECT * from proctoring_log where test_id = %s and email = %s and person_status = 2', (testid, email))
+		callresults = _prepare_proctoring_log_rows(cur.fetchall(), testid)
+	finally:
+		cur.close()
 	return render_template("persondisplaystudentslogs.html",testid = testid, email = email, callresults = callresults)
 
 @app.route('/audiodisplaystudentslogs/<testid>/<email>', methods=['GET','POST'])
@@ -2787,8 +3177,8 @@ def give_test():
 						start_dt = _to_dt(start_raw)
 						end_dt = _to_dt(end_raw)
 						
-						# Check exam timing window (allow 5-minute buffer)
-						if start_dt <= now and end_dt >= now:
+						# Allow a five-minute clock-skew buffer when checking the start time.
+						if exam_window_is_open(start_dt, end_dt, now):
 							results = cur.execute('SELECT time_to_sec(time_left) as time_left, completed from studentTestInfo where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
 							marked_ans = {}
 							if results > 0:
@@ -2863,7 +3253,9 @@ def test(testid):
 		ex_calc = exam_state.get('calc') or calc or exam_row.get('calc', 0)
 		ex_subject = exam_state.get('subject') or subject or exam_row.get('subject', '')
 		ex_topic = exam_state.get('topic') or topic or exam_row.get('topic', '')
-		ex_proctortype = exam_state.get('proctortype') or proctortype or exam_row.get('proctoring_type', 1)
+		ex_proctortype = exam_state.get('proctortype')
+		if ex_proctortype is None:
+			ex_proctortype = proctortype if proctortype is not None else exam_row.get('proctoring_type', 0)
 		ex_answers = exam_state.get('marked_ans') or (marked_ans if isinstance(marked_ans, str) else json.dumps(marked_ans or {}))
 
 		if request.method == 'GET':
@@ -3583,8 +3975,24 @@ def cheat_report():
     if not test_id:
         flash('Please choose an exam first.', 'warning')
         return render_template('cheat_report_select.html', exams=exams)
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute(
+            'SELECT 1 FROM teachers WHERE test_id = %s AND uid = %s LIMIT 1',
+            (test_id, session['uid']),
+        )
+        if not cur.fetchone():
+            flash('Exam not found.', 'danger')
+            return render_template('cheat_report_select.html', exams=exams)
+    finally:
+        cur.close()
 
     try:
+        # Existing databases may predate the evidence migration. Ensure the
+        # columns before the report queries evidence_file and event_data.
+        _ensure_proctoring_evidence_schema()
+        _ensure_proctoring_device_column()
+        _ensure_proctoring_audio_column()
         cur = mysql.connection.cursor()
 
         # 1. Aggregate proctoring_log per student
@@ -3592,8 +4000,9 @@ def cheat_report():
             '''
             SELECT
                 email, name,
-                COUNT(*)                                       AS total_snapshots,
+                SUM(CASE WHEN img_log IS NOT NULL AND img_log NOT IN ('', 'no_camera') THEN 1 ELSE 0 END) AS total_snapshots,
                 SUM(phone_detection)                           AS phone_flags,
+                SUM(device_detection)                          AS device_flags,
                 SUM(CASE WHEN person_status IN (0, 2) THEN 1 ELSE 0 END) AS person_flags,
                 SUM(CASE WHEN user_movements_lr   NOT IN (0)  THEN 1 ELSE 0 END) AS head_flags_lr,
                 SUM(CASE WHEN user_movements_updown NOT IN (0) THEN 1 ELSE 0 END) AS head_flags_ud,
@@ -3610,14 +4019,20 @@ def cheat_report():
         # 2. Aggregate window_estimation_log per student
         cur.execute(
             '''
-            SELECT email, COUNT(*) AS tab_switches
+            SELECT email, transaction_log
             FROM window_estimation_log
             WHERE test_id = %s
-            GROUP BY email
+            ORDER BY transaction_log
             ''',
             (test_id,)
         )
-        tab_rows = {r['email']: r for r in (cur.fetchall() or [])}
+        tab_rows = {}
+        for tab_row in cur.fetchall() or []:
+            email = tab_row['email']
+            if email not in tab_rows:
+                tab_rows[email] = {'email': email, 'tab_switches': 0, 'events': []}
+            tab_rows[email]['tab_switches'] += 1
+            tab_rows[email]['events'].append(str(tab_row['transaction_log']))
 
         # 3. Fetch students who completed the exam, even if they only have window logs.
         cur.execute(
@@ -3632,12 +4047,12 @@ def cheat_report():
         )
         completed_rows = cur.fetchall() or []
 
-        # 4. Fetch snapshots (img_log) per student  – limit per student to avoid huge payloads
+        # 4. Fetch all proctoring rows for event_data JSON parsing and snapshot gallery
         cur.execute(
             '''
-            SELECT email, img_log,
+            SELECT email, img_log, evidence_file, audio_evidence, evidence_status, event_data,
                    user_movements_lr, user_movements_updown,
-                   user_movements_eyes, phone_detection, person_status,
+                   user_movements_eyes, phone_detection, device_detection, person_status,
                    log_time
             FROM proctoring_log
             WHERE test_id = %s
@@ -3648,25 +4063,86 @@ def cheat_report():
         snap_rows = cur.fetchall() or []
         cur.close()
 
-        # Group snapshots by email
-        snaps_by_email = {}
+        import proctoring_policy as pp
+
+        PHONE_EVENTS  = frozenset({'mobile_phone'})
+        DEVICE_EVENTS = frozenset({'electronic_device', 'book_detected'})
+        PERSON_EVENTS = frozenset({'multiple_persons', 'student_absent'})
+        HEAD_EVENTS   = frozenset({
+            'head_turned_left', 'head_turned_right', 'head_tilted_up', 'head_tilted_down',
+            'head_tilted_sideways', 'prolonged_head_turn', 'repeated_head_movement', 'head_movement',
+        })
+        GAZE_EVENTS   = frozenset({
+            'looking_away', 'looking_up', 'looking_down',
+            'prolonged_gaze_deviation', 'repeated_gaze_deviation',
+        })
+        AUDIO_EVENTS  = frozenset({'suspicious_audio'})
+
+        # Group snapshots by email; parse event_data JSON for confirmed incident counts
+        snaps_by_email     = {}
+        confirmed_by_email = {}  # email -> {event_type: count}
+        proctor_rows_by_email = {}
+
         for sr in snap_rows:
             em = sr['email']
+            proctor_rows_by_email.setdefault(em, []).append(sr)
             if em not in snaps_by_email:
                 snaps_by_email[em] = []
-            img_b64 = sr.get('img_log', '') or ''
-            # Only keep non-empty images
-            if img_b64 and img_b64 not in ('', 'no_camera'):
+            if em not in confirmed_by_email:
+                confirmed_by_email[em] = {}
+
+            img_b64       = sr.get('img_log', '') or ''
+            evidence_file = sr.get('evidence_file')
+            audio_file    = sr.get('audio_evidence')
+
+            # Count confirmed events from stored JSON (one row = one confirmed incident)
+            try:
+                metadata = json.loads(sr.get('event_data') or '{}')
+            except (TypeError, ValueError):
+                metadata = {}
+            for evt in metadata.get('events', []):
+                if isinstance(evt, dict):
+                    etype = evt.get('event_type', '')
+                    if etype:
+                        confirmed_by_email[em][etype] = confirmed_by_email[em].get(etype, 0) + 1
+
+            if (img_b64 and img_b64 != 'no_camera') or evidence_file or audio_file:
+                # evidence_file is stored as "<exam_dir>/<filename>" by proctoring_evidence.py
+                evidence_url = ''
+                if evidence_file:
+                    parts = str(evidence_file).replace('\\', '/').split('/')
+                    ev_testid   = parts[0] if len(parts) > 1 else test_id
+                    ev_filename = parts[-1]
+                    try:
+                        evidence_url = url_for(
+                            'proctoring_evidence',
+                            testid=ev_testid,
+                            filename=ev_filename,
+                        )
+                    except Exception:
+                        evidence_url = ''
                 snaps_by_email[em].append({
-                    'img':       img_b64,
+                    'img':            '' if evidence_file else img_b64,
+                    'evidence_url':   evidence_url,
+                    'audio_url':      url_for(
+                        'audio_evidence',
+                        filename=str(audio_file),
+                    ) if audio_file else '',
+                    'evidence_status': sr.get('evidence_status') or 'not_required',
+                    'events': ', '.join(
+                        event.get('event_type', '').replace('_', ' ')
+                        for event in metadata.get('events', [])
+                        if isinstance(event, dict) and event.get('event_type')
+                    ),
                     'time':      str(sr['log_time']),
                     'phone':     bool(sr['phone_detection']),
+                    'device':    bool(sr['device_detection']),
                     'person':    sr['person_status'] != 1,
                     'eye_off':   sr['user_movements_eyes'] not in (0, 2),
                     'head_turn': sr['user_movements_lr'] != 0 or sr['user_movements_updown'] != 0,
                 })
 
-        # 5. Build student list
+        # 5. Build student list — use confirmed_by_email (from event_data JSON) as authoritative source
         students = []
         proctor_by_email = {r['email']: r for r in proctor_rows}
         all_emails = set(proctor_by_email.keys()) | set(tab_rows.keys()) | {r['email'] for r in completed_rows}
@@ -3675,34 +4151,46 @@ def cheat_report():
             if row.get('name'):
                 names_by_email[row['email']] = row['name']
         for email in all_emails:
-            row = proctor_by_email.get(email, {})
-            name          = names_by_email.get(email, email)
-            total_snaps   = int(row.get('total_snapshots') or 0)
-            phone_f       = int(row.get('phone_flags') or 0)
-            person_f      = int(row.get('person_flags') or 0)
-            head_f        = int((row.get('head_flags_lr') or 0)) + int((row.get('head_flags_ud') or 0))
-            eye_f         = int(row.get('eye_flags') or 0)
-            tab_info      = tab_rows.get(email, {})
-            tab_sw        = int(tab_info.get('tab_switches', 0) or 0)
+            row        = proctor_by_email.get(email, {})
+            name       = names_by_email.get(email, email)
+            total_snaps = int(row.get('total_snapshots') or 0)
+            tab_info   = tab_rows.get(email, {})
+            tab_sw     = int(tab_info.get('tab_switches', 0) or 0)
 
-            risk_score = phone_f * 10 + person_f * 5 + tab_sw * 7 + head_f + eye_f
-
-            if risk_score >= 30:
-                risk_level = 'High Risk'
-            elif risk_score >= 10:
-                risk_level = 'Moderate'
+            # Authoritative counts from event_data JSON (confirmed incidents per type)
+            evt_counts = confirmed_by_email.get(email, {})
+            if evt_counts:
+                phone_f  = sum(evt_counts.get(et, 0) for et in PHONE_EVENTS)
+                device_f = sum(evt_counts.get(et, 0) for et in DEVICE_EVENTS)
+                person_f = sum(evt_counts.get(et, 0) for et in PERSON_EVENTS)
+                head_f   = sum(evt_counts.get(et, 0) for et in HEAD_EVENTS)
+                eye_f    = sum(evt_counts.get(et, 0) for et in GAZE_EVENTS)
+                audio_f  = sum(evt_counts.get(et, 0) for et in AUDIO_EVENTS)
             else:
-                risk_level = 'Safe'
+                # Fallback: legacy rows that predate event_data JSON storage
+                phone_f  = int(row.get('phone_flags')  or 0)
+                device_f = int(row.get('device_flags') or 0)
+                person_f = int(row.get('person_flags') or 0)
+                head_f   = int(row.get('head_flags_lr') or 0) + int(row.get('head_flags_ud') or 0)
+                eye_f    = int(row.get('eye_flags')    or 0)
+                audio_f  = 0
+
+            risk_event_counts = pp.count_proctoring_events(
+                proctor_rows_by_email.get(email, [])
+            )
+            risk_score = pp.calculate_risk_score(risk_event_counts, tab_sw)
+            risk_level = _risk_level(risk_score)
 
             students.append({
-                'email': email,
-                'name': name,
-                'enqueued_at': time.time(),
+                'email':          email,
+                'name':           name,
                 'total_snapshots': total_snaps,
                 'phone_flags':    phone_f,
+                'device_flags':   device_f,
                 'person_flags':   person_f,
                 'head_flags':     head_f,
                 'eye_flags':      eye_f,
+                'audio_flags':    audio_f,
                 'tab_switches':   tab_sw,
                 'risk_score':     risk_score,
                 'risk_level':     risk_level,
@@ -3715,7 +4203,7 @@ def cheat_report():
         # Build tab timeline data for JS
         tabs_js = []
         for email, tinfo in tab_rows.items():
-            tabs_js.append({'email': email, 'events': []})
+            tabs_js.append({'email': email, 'events': tinfo['events']})
 
         # Summary counters
         total_students = len(students)
@@ -3724,9 +4212,10 @@ def cheat_report():
         safe_count  = sum(1 for s in students if s['risk_level'] == 'Safe')
         flagged_cnt = high_risk + moderate
         phone_total = sum(s['phone_flags'] for s in students)
+        device_total = sum(s['device_flags'] for s in students)
         tab_total   = sum(s['tab_switches'] for s in students)
 
-        # Strip snapshots from students_json to keep payload small (only send minimal fields)
+        # Include all fields in students_json (detail panel uses snapshots)
         students_json_data = []
         for s in students:
             students_json_data.append({
@@ -3734,13 +4223,15 @@ def cheat_report():
                 'name':            s['name'],
                 'total_snapshots': s['total_snapshots'],
                 'phone_flags':     s['phone_flags'],
+                'device_flags':    s['device_flags'],
                 'person_flags':    s['person_flags'],
                 'head_flags':      s['head_flags'],
                 'eye_flags':       s['eye_flags'],
+                'audio_flags':     s.get('audio_flags', 0),
                 'tab_switches':    s['tab_switches'],
                 'risk_score':      s['risk_score'],
                 'risk_level':      s['risk_level'],
-                'snapshots':       s['snapshots'],    # base64 images included here
+                'snapshots':       s['snapshots'],    # evidence images for gallery
             })
 
         return render_template(
@@ -3755,6 +4246,7 @@ def cheat_report():
             moderate_risk  = moderate,
             safe_count     = safe_count,
             phone_total    = phone_total,
+            device_total   = device_total,
             tab_total      = tab_total,
         )
 

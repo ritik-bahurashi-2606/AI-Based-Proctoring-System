@@ -63,6 +63,7 @@ models/models/
 .gemini/
 registration_tokens/
 audio_evidence/
+proctoring_evidence/
 /loadtest_sessions.csv
 /loadtest_frame.jpg
 

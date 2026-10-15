@@ -10,6 +10,18 @@ x-proctoring-worker: &proctoring-worker
     MYSQL_PORT: ${MYSQL_PORT:-3306}
     CELERY_BROKER_URL: redis://redis:6379/0
     PROCTORING_WORKER_SHARDS: ${PROCTORING_WORKER_SHARDS:-2}
+    PROCTORING_EVIDENCE_DIR: /app/proctoring_evidence
+    PROCTOR_FACE_OUT_OF_FRAME_SECONDS: ${PROCTOR_FACE_OUT_OF_FRAME_SECONDS:-2}
+    PROCTOR_ABSENT_SECONDS: ${PROCTOR_ABSENT_SECONDS:-2}
+    PROCTOR_OBJECT_PERSIST_SECONDS: ${PROCTOR_OBJECT_PERSIST_SECONDS:-2}
+    PROCTOR_MULTIPLE_PERSONS_SECONDS: ${PROCTOR_MULTIPLE_PERSONS_SECONDS:-2}
+    PROCTOR_HEAD_YAW_THRESHOLD: ${PROCTOR_HEAD_YAW_THRESHOLD:-50}
+    PROCTOR_HEAD_PITCH_THRESHOLD: ${PROCTOR_HEAD_PITCH_THRESHOLD:-50}
+    PROCTOR_HEAD_ROLL_THRESHOLD: ${PROCTOR_HEAD_ROLL_THRESHOLD:-50}
+    PROCTOR_HEAD_TURN_SECONDS: ${PROCTOR_HEAD_TURN_SECONDS:-2}
+    PROCTOR_RESTRICTED_DEVICE_LABELS: ${PROCTOR_RESTRICTED_DEVICE_LABELS:-tvmonitor,laptop,mouse,remote,keyboard,microwave,oven,toaster,refrigerator}
+    YOLO_PHONE_SCORE_MIN: ${YOLO_PHONE_SCORE_MIN:-0.25}
+    YOLO_DEVICE_SCORE_MIN: ${YOLO_DEVICE_SCORE_MIN:-0.30}
   depends_on:
     db:
       condition: service_healthy
@@ -17,6 +29,7 @@ x-proctoring-worker: &proctoring-worker
       condition: service_healthy
   volumes:
     - ./audio_evidence:/app/audio_evidence
+    - ./proctoring_evidence:/app/proctoring_evidence
 
 services:
   web:
@@ -44,6 +57,18 @@ services:
       PROCTORING_WORKER_SHARDS: ${PROCTORING_WORKER_SHARDS:-2}
       PROCTORING_MAX_PENDING: ${PROCTORING_MAX_PENDING:-120}
       PROCTORING_RESERVATION_LEASE_SECONDS: ${PROCTORING_RESERVATION_LEASE_SECONDS:-1800}
+      PROCTORING_EVIDENCE_DIR: /app/proctoring_evidence
+      PROCTOR_FACE_OUT_OF_FRAME_SECONDS: ${PROCTOR_FACE_OUT_OF_FRAME_SECONDS:-2}
+      PROCTOR_ABSENT_SECONDS: ${PROCTOR_ABSENT_SECONDS:-2}
+      PROCTOR_OBJECT_PERSIST_SECONDS: ${PROCTOR_OBJECT_PERSIST_SECONDS:-2}
+      PROCTOR_MULTIPLE_PERSONS_SECONDS: ${PROCTOR_MULTIPLE_PERSONS_SECONDS:-2}
+      PROCTOR_HEAD_YAW_THRESHOLD: ${PROCTOR_HEAD_YAW_THRESHOLD:-50}
+      PROCTOR_HEAD_PITCH_THRESHOLD: ${PROCTOR_HEAD_PITCH_THRESHOLD:-50}
+      PROCTOR_HEAD_ROLL_THRESHOLD: ${PROCTOR_HEAD_ROLL_THRESHOLD:-50}
+      PROCTOR_HEAD_TURN_SECONDS: ${PROCTOR_HEAD_TURN_SECONDS:-2}
+      PROCTOR_RESTRICTED_DEVICE_LABELS: ${PROCTOR_RESTRICTED_DEVICE_LABELS:-tvmonitor,laptop,mouse,remote,keyboard,microwave,oven,toaster,refrigerator}
+      YOLO_PHONE_SCORE_MIN: ${YOLO_PHONE_SCORE_MIN:-0.25}
+      YOLO_DEVICE_SCORE_MIN: ${YOLO_DEVICE_SCORE_MIN:-0.30}
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +77,7 @@ services:
     volumes:
       - ./registration_tokens:/app/registration_tokens
       - ./audio_evidence:/app/audio_evidence
+      - ./proctoring_evidence:/app/proctoring_evidence
 
   proctoring_worker_0:
     <<: *proctoring-worker

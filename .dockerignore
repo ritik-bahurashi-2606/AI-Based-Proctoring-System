@@ -21,6 +21,7 @@ coverage.xml
 .dockerignore
 .pytest_cache/
 audio_evidence/
+proctoring_evidence/
 flask_session/
 loadtest_sessions.csv
 loadtest_frame.jpg

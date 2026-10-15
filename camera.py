@@ -1,5 +1,6 @@
 from face_detector import get_face_detector, find_faces
 from face_landmarks import get_landmark_model, detect_marks
+from proctoring_detection import resolve_person_count, summarize_object_detections
 import tensorflow as tf
 import numpy as np
 import cv2
@@ -18,10 +19,14 @@ import time
 from collections import deque
 
 # ── Configurable thresholds (env-overridable) ─────────────────────────────────
-_HEAD_YAW_THRESH   = float(os.getenv('PROCTOR_HEAD_YAW_THRESHOLD',  '25'))   # degrees
-_HEAD_PITCH_THRESH = float(os.getenv('PROCTOR_HEAD_PITCH_THRESHOLD', '20'))   # degrees
+_HEAD_YAW_THRESH   = float(os.getenv('PROCTOR_HEAD_YAW_THRESHOLD',  '50'))
+_HEAD_PITCH_THRESH = float(os.getenv('PROCTOR_HEAD_PITCH_THRESHOLD', '50'))
 _SMOOTHING_ALPHA   = 0.18   # EMA smoothing factor (lower = smoother)
 _EAR_BLINK_THRESH  = 0.18   # eye aspect ratio below → blink, skip gaze
+YOLO_PHONE_SCORE_MIN = float(os.getenv("YOLO_PHONE_SCORE_MIN", "0.25"))
+YOLO_DEVICE_SCORE_MIN = float(os.getenv("YOLO_DEVICE_SCORE_MIN", "0.30"))
+YOLO_BOOK_SCORE_MIN = float(os.getenv("YOLO_BOOK_SCORE_MIN", "0.40"))
+YOLO_PERSON_SCORE_MIN = float(os.getenv("YOLO_PERSON_SCORE_MIN", "0.30"))
 
 # ── Optional gaze tracker ─────────────────────────────────────────────────────
 # Gaze tracking requires a valid dlib landmark model and is optional.
@@ -60,6 +65,7 @@ except Exception as exc:
     print(f"Ultralytics object detector unavailable: {exc}")
 
 _ultralytics_model = None
+_legacy_yolo_model = None
 
 
 def load_darknet_weights(model, weights_file):
@@ -136,7 +142,7 @@ def detect_objects(image, class_names):
         if model is not None:
             try:
                 rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                results = model(rgb, conf=0.25, imgsz=320, stream=False, verbose=False)
+                results = model(rgb, conf=0.15, imgsz=640, stream=False, verbose=False)
                 detections = []
                 for result in results:
                     for box in result.boxes.data.cpu().tolist():
@@ -149,15 +155,15 @@ def detect_objects(image, class_names):
                                "score": float(score),
                                "bbox": [x1, y1, x2, y2],
                             })
-                if detections:
-                    return detections
+                return detections
             except Exception as exc:
                 print(f"Ultralytics object detection failed: {exc}")
 
     yolo_input = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    yolo_input = cv2.resize(yolo_input, (320, 320)).astype(np.float32) / 255.0
+    yolo_input = cv2.resize(yolo_input, (416, 416)).astype(np.float32) / 255.0
     yolo_input = np.expand_dims(yolo_input, 0)
-    boxes, scores, classes, nums = yolo(yolo_input)
+    legacy_model = get_legacy_object_detector()
+    boxes, scores, classes, nums = legacy_model(yolo_input)
     detections = []
     h, w = image.shape[:2]
     for i in range(nums[0]):
@@ -294,7 +300,13 @@ def yolo_nms(outputs, anchors, masks, classes):
         boxes=tf.reshape(bbox, (tf.shape(bbox)[0], -1, 1, 4)),
         scores=tf.reshape(scores, (tf.shape(scores)[0], -1, tf.shape(scores)[-1])),
         max_output_size_per_class=100, max_total_size=100,
-        iou_threshold=0.5, score_threshold=0.55)
+        iou_threshold=0.5,
+        score_threshold=min(
+            YOLO_PERSON_SCORE_MIN,
+            YOLO_PHONE_SCORE_MIN,
+            YOLO_DEVICE_SCORE_MIN,
+            YOLO_BOOK_SCORE_MIN,
+        ))
     return boxes, scores, classes, valid_detections
 
 
@@ -316,8 +328,20 @@ def YoloV3(size=None, channels=3, anchors=yolo_anchors,
     return Model(inputs, outputs, name='yolov3')
 
 
-yolo = YoloV3()
-load_darknet_weights(yolo, 'models/yolov3.weights')
+def get_legacy_object_detector():
+    global _legacy_yolo_model
+    if _legacy_yolo_model is None:
+        weights_path = os.path.join(_BASE_DIR, 'models', 'yolov3.weights')
+        if not os.path.isfile(weights_path):
+            raise FileNotFoundError(
+                f'Legacy YOLOv3 weights are missing: {weights_path}'
+            )
+        _legacy_yolo_model = YoloV3()
+        load_darknet_weights(_legacy_yolo_model, weights_path)
+    return _legacy_yolo_model
+
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── Face/landmark models ──────────────────────────────────────────────────────
 face_model = get_face_detector(quantized=True)
@@ -406,25 +430,17 @@ def get_frame(imgData):
     dist_coeffs = np.zeros((4, 1))
 
     # ── YOLO object detection ─────────────────────────────────────────────────
-    class_names = [c.strip() for c in open("models/classes.TXT").readlines()]
+    with open(os.path.join(_BASE_DIR, "models", "classes.TXT"), encoding="utf-8") as class_file:
+        class_names = [line.strip() for line in class_file]
     detections = detect_objects(image, class_names)
 
-    count = 0
-    mob_status = 0
-    phone_confidence = 0.0
-
-    for detection in detections:
-        cls_id = detection["class_id"]
-        score = detection["score"]
-        if cls_id == 0 and score >= float(os.getenv('YOLO_PERSON_SCORE_MIN', '0.38')):
-            count += 1
-        if cls_id == 67 and score >= float(os.getenv('YOLO_PHONE_SCORE_MIN', '0.52')):
-            mob_status = 1
-            phone_confidence = max(phone_confidence, score)
-
-    person_status = 0 if count == 0 else (2 if count > 1 else 1)
-    image = draw_detections(image, detections, class_names)
-
+    object_signals = summarize_object_detections(
+        detections,
+        person_score_min=YOLO_PERSON_SCORE_MIN,
+        phone_score_min=YOLO_PHONE_SCORE_MIN,
+        device_score_min=YOLO_DEVICE_SCORE_MIN,
+        book_score_min=YOLO_BOOK_SCORE_MIN,
+    )
     # Use the original BGR image (not YOLO-scaled) for all subsequent CV ops
     original_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
@@ -438,6 +454,24 @@ def get_frame(imgData):
     is_blinking = False
 
     faces = find_faces(original_bgr, face_model)
+    detections_to_draw = (
+        [
+            detection for detection in detections
+            if str(detection.get("class_name", "")).strip().lower() != "person"
+        ]
+        if faces
+        else detections
+    )
+    image = draw_detections(image, detections_to_draw, class_names)
+    for face_box in faces:
+        x1, y1, x2, y2 = map(int, face_box)
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(
+            image, "Face", (x1, max(0, y1 - 5)),
+            cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 255, 0), 2,
+        )
+    person_count = resolve_person_count(object_signals["person_count"], len(faces))
+    person_status = 0 if person_count == 0 else (2 if person_count > 1 else 1)
 
     if LANDMARK_AVAILABLE and landmark_model is not None and len(faces) > 0:
         face = faces[0]   # use the largest/first face
@@ -480,6 +514,15 @@ def get_frame(imgData):
             head_yaw   = _smooth_yaw
             head_pitch = _smooth_pitch
             head_roll  = _smooth_roll
+            cv2.putText(
+                image,
+                f"Yaw {head_yaw:.1f} Pitch {head_pitch:.1f} Roll {head_roll:.1f}",
+                (10, 25),
+                cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                0.8,
+                (0, 255, 0),
+                1,
+            )
 
             # Confidence = how cleanly the face is detected
             head_confidence = min(1.0, 1.0 - abs(head_yaw) / 90.0)
@@ -559,9 +602,16 @@ def get_frame(imgData):
 
     return {
         'jpg_as_text':      jpg_as_text,
-        'mob_status':       mob_status,
-        'phone_confidence': round(phone_confidence, 3),
+        'mob_status':       object_signals["phone_status"],
+        'phone_confidence': round(object_signals["phone_confidence"], 3),
+        'device_status':    object_signals["device_status"],
+        'device_confidence': round(object_signals["device_confidence"], 3),
+        'device_names':     object_signals["device_names"],
+        'book_status':      object_signals["book_status"],
+        'book_confidence':  round(object_signals["book_confidence"], 3),
         'person_status':    person_status,
+        'person_count':     person_count,
+        'person_confidence': round(object_signals["person_confidence"], 3),
         'user_move1':       user_move1,
         'user_move2':       user_move2,
         'eye_movements':    eye_movements,
