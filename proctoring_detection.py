@@ -29,6 +29,25 @@ def _overlap_ratio(first, second):
     return intersection / union if union else 0.0
 
 
+def _deduplicate_person_boxes(boxes):
+    selected = []
+    for box in boxes:
+        if not any(_overlap_ratio(box, existing) >= 0.65 for existing in selected):
+            selected.append(box)
+    return selected
+
+
+def _deduplicate_boxes(boxes, overlap_threshold):
+    selected = []
+    for box in boxes:
+        if not any(
+            _overlap_ratio(box, existing) >= overlap_threshold
+            for existing in selected
+        ):
+            selected.append(box)
+    return selected
+
+
 def _unique_person_boxes(detections, score_min):
     boxes = [
         (float(detection["score"]), detection.get("bbox"))
@@ -37,18 +56,41 @@ def _unique_person_boxes(detections, score_min):
         and float(detection["score"]) >= score_min
         and detection.get("bbox") is not None
     ]
-    selected = []
-    for score, box in sorted(boxes, reverse=True):
-        if not any(_overlap_ratio(box, existing) >= 0.65 for existing in selected):
-            selected.append(box)
-    return len(selected)
+    ordered_boxes = [box for _, box in sorted(boxes, reverse=True)]
+    return len(_deduplicate_person_boxes(ordered_boxes))
 
 
-def resolve_person_count(detected_person_count, face_count):
-    """Prefer live face detections over YOLO person boxes when available."""
-    if face_count > 0:
-        return face_count
-    return detected_person_count
+def resolve_person_count(
+    detected_person_count,
+    face_count,
+    person_boxes=None,
+    face_boxes=None,
+):
+    """Combine face and person boxes, counting a person box without a face once."""
+    if not face_boxes:
+        if face_count > 0:
+            return face_count
+        return detected_person_count
+
+    unique_faces = _deduplicate_boxes(face_boxes, 0.5)
+    if not person_boxes:
+        return len(unique_faces)
+
+    unique_people = _deduplicate_person_boxes(person_boxes)
+    unmatched_people = 0
+
+    for person_box in unique_people:
+        x1, y1, x2, y2 = map(float, person_box)
+        person_height = max(0.0, y2 - y1)
+        face_found = any(
+            x1 <= (float(face[0]) + float(face[2])) / 2 <= x2
+            and y1 <= (float(face[1]) + float(face[3])) / 2 <= y1 + person_height * 0.5
+            for face in unique_faces
+        )
+        if not face_found:
+            unmatched_people += 1
+
+    return len(unique_faces) + unmatched_people
 
 
 def summarize_object_detections(

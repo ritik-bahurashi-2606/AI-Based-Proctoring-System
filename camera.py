@@ -141,8 +141,7 @@ def detect_objects(image, class_names):
         model = get_object_detector()
         if model is not None:
             try:
-                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                results = model(rgb, conf=0.15, imgsz=640, stream=False, verbose=False)
+                results = model(image, conf=0.15, imgsz=640, stream=False, verbose=False)
                 detections = []
                 for result in results:
                     for box in result.boxes.data.cpu().tolist():
@@ -454,15 +453,14 @@ def get_frame(imgData):
     is_blinking = False
 
     faces = find_faces(original_bgr, face_model)
-    detections_to_draw = (
-        [
-            detection for detection in detections
-            if str(detection.get("class_name", "")).strip().lower() != "person"
-        ]
-        if faces
-        else detections
-    )
-    image = draw_detections(image, detections_to_draw, class_names)
+    person_boxes = [
+        detection["bbox"]
+        for detection in detections
+        if str(detection.get("class_name", "")).strip().lower() == "person"
+        and float(detection.get("score", 0.0)) >= YOLO_PERSON_SCORE_MIN
+        and detection.get("bbox") is not None
+    ]
+    image = draw_detections(image, detections, class_names)
     for face_box in faces:
         x1, y1, x2, y2 = map(int, face_box)
         cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
@@ -470,7 +468,12 @@ def get_frame(imgData):
             image, "Face", (x1, max(0, y1 - 5)),
             cv2.FONT_HERSHEY_COMPLEX_SMALL, 1, (0, 255, 0), 2,
         )
-    person_count = resolve_person_count(object_signals["person_count"], len(faces))
+    person_count = resolve_person_count(
+        object_signals["person_count"],
+        len(faces),
+        person_boxes=person_boxes,
+        face_boxes=faces,
+    )
     person_status = 0 if person_count == 0 else (2 if person_count > 1 else 1)
 
     if LANDMARK_AVAILABLE and landmark_model is not None and len(faces) > 0:

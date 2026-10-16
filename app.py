@@ -986,6 +986,7 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 	evidence_status = 'not_required'
 	logging_status = 'not_required'
 	evidence_path = None
+	database_committed = False
 	if should_log and logged_events:
 		cur = None
 		try:
@@ -1023,7 +1024,7 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 			cur = mysql.connection.cursor()
 			if job_id:
 				_ensure_proctoring_job_id_column()
-				rows = cur.execute(
+				cur.execute(
 					'INSERT INTO proctoring_log '
 					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
 					'user_movements_lr, user_movements_eyes, phone_detection, device_detection, person_status, '
@@ -1038,7 +1039,7 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 					 event_data, detection_confidence, 'unreviewed'),
 				)
 			else:
-				rows = cur.execute(
+				cur.execute(
 					'INSERT INTO proctoring_log '
 					'(email, name, test_id, voice_db, img_log, user_movements_updown, '
 					'user_movements_lr, user_movements_eyes, phone_detection, device_detection, person_status, '
@@ -1052,9 +1053,11 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 					 event_data, detection_confidence, 'unreviewed'),
 				)
 			mysql.connection.commit()
+			database_committed = True
+			logged = True
+			logging_status = 'saved'
+			pp.confirm_events_saved(user_key, logged_events)
 			log_pid = cur.lastrowid
-			logged = rows > 0 or bool(log_pid)
-			logging_status = 'saved' if logged else 'failed'
 			if job_id and log_pid:
 				cur.execute(
 					'SELECT evidence_file, evidence_status FROM proctoring_log WHERE id = %s',
@@ -1092,21 +1095,32 @@ def _process_proctoring_frame(img_data, testid, voice_db, uid, email, name, job_
 				evidence_status,
 			)
 		except Exception:
-			app.logger.exception('proctoring_log insert failed: uid=%s test=%s', uid, testid)
-			try:
-				mysql.connection.rollback()
-			except Exception:
-				app.logger.exception('Proctoring log transaction rollback failed')
-			if evidence_path:
+			if database_committed:
+				app.logger.exception(
+					'Proctoring log post-commit processing failed: uid=%s test=%s pid=%s',
+					uid, testid, log_pid,
+				)
+				if logged:
+					logging_status = 'saved'
+					if evidence_path and evidence_status == 'saved_pending_database':
+						evidence_status = 'failed' if job_id else 'saved'
+			else:
+				app.logger.exception('proctoring_log insert failed: uid=%s test=%s', uid, testid)
+				pp.reject_events_save(user_key, logged_events)
 				try:
-					delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
-				except OSError:
-					app.logger.exception(
-						'Could not remove uncommitted evidence: uid=%s test=%s', uid, testid
-					)
-				evidence_path = None
-			logging_status = 'failed'
-			evidence_status = 'failed'
+					mysql.connection.rollback()
+				except Exception:
+					app.logger.exception('Proctoring log transaction rollback failed')
+				if evidence_path:
+					try:
+						delete_evidence_image(evidence_path, _PROCTORING_EVIDENCE_DIR)
+					except OSError:
+						app.logger.exception(
+							'Could not remove uncommitted evidence: uid=%s test=%s', uid, testid
+						)
+					evidence_path = None
+				logging_status = 'failed'
+				evidence_status = 'failed'
 		finally:
 			if cur is not None:
 				cur.close()

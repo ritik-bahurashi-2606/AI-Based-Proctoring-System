@@ -36,6 +36,8 @@
   var audioUploadError     = null;
   var warningCounts        = {};
   var lastWarningAt        = {};
+  var activeDetectionWarnings = {};
+  var lastDetectionWarningSeenAt = {};
   var captureActive        = false;
   var snapshotTimer        = null;
 
@@ -46,7 +48,7 @@
   var AUDIO_TRIGGER_LEVEL      = 18;
   var AUDIO_SILENCE_TIMEOUT_MS = 4000;   // stop recording after 4 s of silence
   var WARNING_COOLDOWN_MS      = 5000;   // min ms between same-type toasts
-  var SNAP_INTERVAL_MS         = 2000;   // how often to capture a frame
+  var SNAP_INTERVAL_MS         = 1000;   // how often to capture a frame
 
   /* ═══════════════════════════════════════════════════════════════════════
    *  WARNING TOAST SYSTEM
@@ -116,6 +118,26 @@
   function handleProctorResponse(response) {
     if (!response || response.status === 'error') return;
 
+    var warningStateNow = Date.now();
+    [
+      ['mobile_phone', 'mob_status', 1],
+      ['multiple_persons', 'person_status', 2]
+    ].forEach(function (mapping) {
+      var eventType = mapping[0];
+      var field = mapping[1];
+      var activeValue = mapping[2];
+      if (typeof response[field] === 'undefined') return;
+      if (Number(response[field]) === activeValue) {
+        lastDetectionWarningSeenAt[eventType] = warningStateNow;
+      } else if (
+        lastDetectionWarningSeenAt[eventType]
+        && warningStateNow - lastDetectionWarningSeenAt[eventType] > 6000
+      ) {
+        activeDetectionWarnings[eventType] = false;
+        delete lastDetectionWarningSeenAt[eventType];
+      }
+    });
+
     if (response.evidence_status === 'failed' || response.logging_status === 'failed') {
       var diagnostic = response.evidence_message
         || 'A proctoring event was detected but could not be saved. Please notify your instructor.';
@@ -125,9 +147,27 @@
 
     /* Show all server-determined warnings */
     var warnings = response.warnings || response.events || [];
+    var loggedEventTypes = {};
+    (response.events || []).forEach(function (event) {
+      if (event && event.event_type) loggedEventTypes[event.event_type] = true;
+    });
     warnings.forEach(function (event) {
       if (event && event.message) {
-        showProctorWarning(event.message, event.event_type);
+        var eventType = event.event_type;
+        if (eventType === 'mobile_phone' || eventType === 'multiple_persons') {
+          if (activeDetectionWarnings[eventType]) return;
+          activeDetectionWarnings[eventType] = true;
+        }
+        var message = event.message;
+        if (
+          (eventType === 'mobile_phone' || eventType === 'multiple_persons')
+          && !loggedEventTypes[eventType]
+        ) {
+          message = eventType === 'mobile_phone'
+            ? 'Possible mobile phone detected. Confirmation is in progress; this warning is not yet a saved incident.'
+            : 'Possible additional person detected. Confirmation is in progress; this warning is not yet a saved incident.';
+        }
+        showProctorWarning(message, eventType);
       }
     });
 

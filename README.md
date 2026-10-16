@@ -154,8 +154,11 @@ when initialization fails.
 | `PROCTOR_FACE_MATCH_BACKEND` | `auto` | `auto`, `insightface`, `deepface` | Student login face matching |
 | `PROCTOR_OBJECT_BACKEND` | `auto` | `auto`, `ultralytics`, `yolov8`, `yolov11`, `yolov3` | Person/mobile object detection |
 | `PROCTOR_RESTRICTED_DEVICE_LABELS` | `tvmonitor,laptop,mouse,remote,keyboard,microwave,oven,toaster,refrigerator` | Comma-separated COCO labels | Object categories to include in the device warning |
-| `PROCTOR_OBJECT_PERSIST_SECONDS` | `2` | Seconds | Continuous time a phone/device/book must be visible before an event |
-| `PROCTOR_MULTIPLE_PERSONS_SECONDS` | `2` | Seconds | Continuous time multiple people must be visible before an event |
+| `PROCTOR_OBJECT_PERSIST_SECONDS` | `2` | Seconds | Estimated detected exposure to a phone/device/book before an event |
+| `PROCTOR_OBJECT_TRACK_WINDOW_SECONDS` | `15` | Seconds | Rolling window used to combine intermittent object detections |
+| `PROCTOR_OBJECT_SAMPLE_CREDIT_SECONDS` | `1` | Seconds | Maximum exposure credited for a single positive frame |
+| `PROCTOR_OBJECT_MISS_GRACE_SECONDS` | `5` | Seconds | Detection gap tolerated before rearming a logged object event |
+| `PROCTOR_MULTIPLE_PERSONS_SECONDS` | `2` | Seconds | Estimated detected exposure to multiple people before an event |
 | `PROCTOR_HEAD_YAW_THRESHOLD` | `50` | Degrees | Left/right head-turn threshold relative to calibration |
 | `PROCTOR_HEAD_PITCH_THRESHOLD` | `50` | Degrees | Up/down head-tilt threshold relative to calibration |
 | `PROCTOR_HEAD_ROLL_THRESHOLD` | `50` | Degrees | Sideways head-tilt threshold relative to calibration |
@@ -186,8 +189,15 @@ detection. COCO's `clock` class is not a smartwatch class; an ordinary watch
 cannot reliably be classified as electronic from a webcam image, so watches
 are not treated as confirmed prohibited devices. Object detection annotates
 the captured frame with labels and confidence values. Person boxes with
-substantial overlap are counted once, and device/person events require the
-configured persistence interval.
+substantial overlap and duplicate face boxes are counted once. When face and
+person boxes are both present, person boxes that contain a detected face are
+matched to it, while separate person boxes can still contribute an additional
+person. Object and multiple-person warnings appear after their configured
+temporal confirmation, rather than on a single frame. Device/person events
+combine detections in a rolling exposure window, so an occasional missed frame
+does not restart the timer. A proctoring event is considered saved only after
+the database transaction commits; failed saves are eligible for retry on later
+frames. Exam webcam frames are sampled once per second by default.
 
 When a confirmed visual event is logged, its annotated JPEG is written under
 `PROCTORING_EVIDENCE_DIR/<exam-id>/`. Tab-switch and suspicious-audio logs also

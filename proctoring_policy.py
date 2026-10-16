@@ -31,6 +31,9 @@ PROCTOR_GAZE_DEVIATION_REPEAT_COUNT = int(os.getenv("PROCTOR_GAZE_DEVIATION_REPE
 PROCTOR_CALIBRATION_SECONDS = float(os.getenv("PROCTOR_CALIBRATION_SECONDS", "5"))
 PROCTOR_ABSENT_SECONDS = float(os.getenv("PROCTOR_ABSENT_SECONDS", "2"))
 PROCTOR_FACE_HIDDEN_SECONDS = float(os.getenv("PROCTOR_FACE_HIDDEN_SECONDS", "3"))
+PROCTOR_OBJECT_TRACK_WINDOW_SECONDS = float(os.getenv("PROCTOR_OBJECT_TRACK_WINDOW_SECONDS", "15"))
+PROCTOR_OBJECT_SAMPLE_CREDIT_SECONDS = float(os.getenv("PROCTOR_OBJECT_SAMPLE_CREDIT_SECONDS", "1"))
+PROCTOR_OBJECT_MISS_GRACE_SECONDS = float(os.getenv("PROCTOR_OBJECT_MISS_GRACE_SECONDS", "5"))
 YOLO_PHONE_SCORE_MIN = float(os.getenv("YOLO_PHONE_SCORE_MIN", "0.52"))
 YOLO_BOOK_SCORE_MIN = float(os.getenv("YOLO_BOOK_SCORE_MIN", "0.48"))
 YOLO_PERSON_SCORE_MIN = float(os.getenv("YOLO_PERSON_SCORE_MIN", "0.38"))
@@ -113,8 +116,10 @@ _state = defaultdict(lambda: {
     "calibration_baseline": None,
     "absent_started_at": None,
     "face_hidden_started_at": None,
-    "persistent_event_started_at": {},
+    "persistent_event_observations": {},
+    "persistent_event_last_seen_at": {},
     "persistent_event_reported": set(),
+    "pending_log_events": {},
 })
 
 
@@ -132,6 +137,32 @@ def _mark_logged(state, event_type, now, duration=None):
     if duration is not None:
         # Store duration for temporal events
         state["last_logged"][f"{event_type}_duration"] = duration
+
+
+def confirm_events_saved(user_key, events):
+    state = _state[user_key]
+    for event in events:
+        event_type = event["event_type"]
+        state["pending_log_events"].pop(event_type, None)
+
+
+def reject_events_save(user_key, events):
+    state = _state[user_key]
+    for event in events:
+        event_type = event["event_type"]
+        previous = state["pending_log_events"].pop(event_type, None)
+        if previous is None:
+            continue
+        if previous["last_logged"] is None:
+            state["last_logged"].pop(event_type, None)
+        else:
+            state["last_logged"][event_type] = previous["last_logged"]
+        if previous["is_persistent"]:
+            state["persistent_event_reported"].discard(event_type)
+        elif previous["was_reported"]:
+            state["persistent_event_reported"].add(event_type)
+        else:
+            state["persistent_event_reported"].discard(event_type)
 
 
 def _image_brightness(img_b64):
@@ -239,31 +270,50 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
     if brightness is not None and brightness < PROCTOR_LOW_LIGHT_THRESHOLD:
         candidates.append(_event("low_lighting", confidence=max(0.5, 1 - brightness / PROCTOR_LOW_LIGHT_THRESHOLD)))
 
-    presence_events = state["persistent_event_started_at"]
+    presence_events = state["persistent_event_observations"]
+    last_seen_events = state["persistent_event_last_seen_at"]
     reported_events = state["persistent_event_reported"]
 
     def persistent_object_event(event_type, present, confidence, persistence, **metadata):
+        history = presence_events.setdefault(event_type, [])
+        last_seen = last_seen_events.get(event_type)
         if not present:
-            presence_events.pop(event_type, None)
-            reported_events.discard(event_type)
+            if last_seen is None or now - last_seen > PROCTOR_OBJECT_MISS_GRACE_SECONDS:
+                presence_events.pop(event_type, None)
+                last_seen_events.pop(event_type, None)
+                reported_events.discard(event_type)
             return
-        # Issue warning immediately for visible object/persons
-        warning_ev = _event(
-            event_type,
-            confidence=confidence,
-            **metadata,
-        )
-        if not any(w.get("event_type") == event_type for w in warnings):
-            warnings.append(warning_ev)
-
-        started_at = presence_events.setdefault(event_type, now)
-        duration = now - started_at
-        if duration >= persistence and event_type not in reported_events:
+        if last_seen is not None and now - last_seen > PROCTOR_OBJECT_MISS_GRACE_SECONDS:
+            history.clear()
+            reported_events.discard(event_type)
+        history[:] = [
+            (observed_at, credit)
+            for observed_at, credit in history
+            if now - observed_at <= PROCTOR_OBJECT_TRACK_WINDOW_SECONDS
+        ]
+        if history:
+            elapsed = max(0.0, now - (last_seen if last_seen is not None else now))
+            credit = min(elapsed, PROCTOR_OBJECT_SAMPLE_CREDIT_SECONDS)
+        else:
+            credit = PROCTOR_OBJECT_SAMPLE_CREDIT_SECONDS
+        history.append((now, credit))
+        last_seen_events[event_type] = now
+        exposure = sum(sample_credit for _, sample_credit in history)
+        if exposure >= persistence:
+            warning_ev = _event(
+                event_type,
+                confidence=confidence,
+                duration=exposure,
+                **metadata,
+            )
+            if not any(w.get("event_type") == event_type for w in warnings):
+                warnings.append(warning_ev)
+        if exposure >= persistence and event_type not in reported_events:
             reported_events.add(event_type)
             candidates.append(_event(
                 event_type,
                 confidence=confidence,
-                duration=duration,
+                duration=exposure,
                 **metadata,
             ))
 
@@ -502,6 +552,14 @@ def evaluate_proctoring_event(user_key, proctor_data, voice_db, img_b64):
         )
         if should_persist and _cooldown_ok(state, log_type, now):
             duration = candidate.get("duration")
+            state["pending_log_events"].setdefault(
+                log_type,
+                {
+                    "last_logged": state["last_logged"].get(log_type),
+                    "was_reported": log_type in state["persistent_event_reported"],
+                    "is_persistent": log_type in state["persistent_event_observations"],
+                },
+            )
             _mark_logged(state, log_type, now, duration)
             # Add duration to event if it was a prolonged event
             if duration is not None: candidate['duration'] = round(duration, 2)

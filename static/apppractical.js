@@ -135,7 +135,7 @@ function legacyCaptureSnapshot() {
               }
           });
     } 
-    setTimeout(legacyCaptureSnapshot, 2000);
+    setTimeout(legacyCaptureSnapshot, 1000);
 
   } 
 

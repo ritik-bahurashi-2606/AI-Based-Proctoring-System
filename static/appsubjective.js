@@ -135,7 +135,7 @@ window.onfocus = function(event) {
                     }
                 });
         }
-      setTimeout(legacyCaptureSnapshot, 2000);
+      setTimeout(legacyCaptureSnapshot, 1000);
     }  
 
 $(document).ready( function() {

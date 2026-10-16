@@ -98,14 +98,45 @@ def test_clock_class_is_not_treated_as_smartwatch():
     assert result["device_status"] == 0
 
 
-def test_face_count_prevents_background_person_detections_from_becoming_multi_person():
+def test_face_count_takes_precedence_over_false_extra_person_box():
     assert resolve_person_count(detected_person_count=2, face_count=1) == 1
 
 
-def test_face_count_preserves_genuine_multiple_people():
+def test_multiple_faces_take_precedence_over_person_box_count():
     assert resolve_person_count(detected_person_count=1, face_count=2) == 2
 
 
 def test_person_detector_remains_fallback_when_no_face_is_detected():
     assert resolve_person_count(detected_person_count=0, face_count=0) == 0
     assert resolve_person_count(detected_person_count=1, face_count=0) == 1
+
+
+def test_person_count_uses_face_when_person_box_is_missing():
+    assert resolve_person_count(detected_person_count=0, face_count=1) == 1
+
+
+def test_duplicate_face_boxes_do_not_inflate_person_count():
+    assert resolve_person_count(
+        detected_person_count=0,
+        face_count=2,
+        face_boxes=[[20, 15, 60, 60], [22, 16, 59, 59]],
+        person_boxes=[],
+    ) == 1
+
+
+def test_face_and_distinct_unmatched_person_box_count_two_people():
+    assert resolve_person_count(
+        detected_person_count=2,
+        face_count=1,
+        face_boxes=[[35, 15, 65, 50]],
+        person_boxes=[[10, 0, 90, 180], [120, 0, 200, 180]],
+    ) == 2
+
+
+def test_person_box_containing_face_is_not_counted_as_an_extra_person():
+    assert resolve_person_count(
+        detected_person_count=1,
+        face_count=1,
+        face_boxes=[[35, 15, 65, 50]],
+        person_boxes=[[10, 0, 90, 180]],
+    ) == 1
