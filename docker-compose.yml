@@ -1,13 +1,16 @@
+x-mysql-app-environment: &mysql-app-environment
+  MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the application .env file}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the application .env file}
+  MYSQL_DB: ${MYSQL_DB:?Set MYSQL_DB in the application .env file}
+  MYSQL_PORT: "3306"
+
 x-proctoring-worker: &proctoring-worker
   image: myproctor-app:local
   restart: unless-stopped
   command: ["celery", "-A", "proctoring_worker.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1", "-Q", "proctoring-0"]
   environment:
-    MYSQL_HOST: host.docker.internal
-    MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the application .env file}
-    MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the application .env file}
-    MYSQL_DB: ${MYSQL_DB:?Set MYSQL_DB in the application .env file}
-    MYSQL_PORT: ${MYSQL_PORT:-3306}
+    MYSQL_HOST: db
+    <<: *mysql-app-environment
     CELERY_BROKER_URL: redis://redis:6379/0
     PROCTORING_WORKER_SHARDS: ${PROCTORING_WORKER_SHARDS:-2}
     PROCTORING_EVIDENCE_DIR: /app/proctoring_evidence
@@ -43,11 +46,8 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MYSQL_HOST: host.docker.internal
-      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the application .env file}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the application .env file}
-      MYSQL_DB: ${MYSQL_DB:?Set MYSQL_DB in the application .env file}
-      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_HOST: db
+      <<: *mysql-app-environment
       MAIL_SERVER: ${MAIL_SERVER:?Set MAIL_SERVER in the application .env file}
       MAIL_PORT: ${MAIL_PORT:-587}
       MAIL_USERNAME: ${MAIL_USERNAME:?Set MAIL_USERNAME in the application .env file}
@@ -124,10 +124,12 @@ services:
     container_name: myproctor_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-ritik}
-      MYSQL_DATABASE: myproctor
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the application .env file}
+      MYSQL_DATABASE: ${MYSQL_DB:?Set MYSQL_DB in the application .env file}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the application .env file}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the application .env file}
     ports:
-      - "3307:3306"
+      - "127.0.0.1:${MYSQL_PUBLISHED_PORT:-3307}:3306"
     volumes:
       - db_data:/var/lib/mysql
       - ./DB/quizappstructure.sql:/docker-entrypoint-initdb.d/init.sql

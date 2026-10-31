@@ -94,6 +94,20 @@ docker compose up --build
 The default stack runs two ordered proctoring consumers. Each student/exam is
 consistently assigned to one shard so temporal warnings and event cooldowns
 remain in frame order while different students can be analyzed concurrently.
+The web app and workers connect to the Compose MySQL service at `db:3306`;
+Compose creates the configured application database/user and keeps MySQL off
+public interfaces. `MYSQL_ROOT_PASSWORD` must be set separately from the
+application user's `MYSQL_PASSWORD`. For local database tools, the optional
+`MYSQL_PUBLISHED_PORT` (default `3307`) is bound only to localhost.
+Set `MYSQL_USER` to a non-root application username (not `root`), and use
+different strong values for `MYSQL_PASSWORD` and `MYSQL_ROOT_PASSWORD`. These
+Compose initialization variables create the database and user only when the
+`db_data` volume is empty. They do not migrate a pre-existing host MySQL
+database or change credentials in an initialized volume. To retain existing
+professor accounts, exams, and student records, back up the source database
+and explicitly import it into the Compose database before directing users to
+the Compose deployment. Do not remove `db_data` as a way to change passwords;
+that volume contains the persistent database.
 The browser keeps a captured frame and retries it when the bounded queue is
 full; this preserves the frame but can delay later warnings when worker
 throughput is below camera capture demand. `PROCTORING_MAX_PENDING` controls

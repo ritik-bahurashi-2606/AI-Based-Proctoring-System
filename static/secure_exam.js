@@ -159,6 +159,32 @@
         .catch(function () {});
     }
 
+    function showBlockedNotification(eventType, explanation) {
+      report(eventType, explanation, { blocked: true });
+      var existing = document.getElementById('secure-warning');
+      if (existing) existing.remove();
+      var warning = document.createElement('div');
+      warning.id = 'secure-warning';
+      warning.className = 'secure-warning';
+      warning.innerHTML = '<div class="secure-warning-panel"><h2>Screenshot Blocked</h2><p>' + explanation + '</p><p>This action has been logged and may be flagged as a proctoring violation.</p><button type="button" class="btn btn-primary">Continue Exam</button></div>';
+      warning.querySelector('button').addEventListener('click', function () { warning.remove(); });
+      document.body.appendChild(warning);
+      if (window.Swal) {
+        try {
+          window.Swal.fire({
+            title: 'Screenshot not allowed',
+            text: explanation,
+            icon: 'warning',
+            confirmButtonText: 'Back to exam',
+            allowOutsideClick: false,
+            allowEscapeKey: false
+          });
+        } catch (err) {}
+      } else {
+        alert(explanation);
+      }
+    }
+
     function showWarning(eventType, explanation, result) {
       if (eventType === 'FOCUS_RESTORED') return;
       var existing = document.getElementById('secure-warning');
@@ -198,7 +224,35 @@
     window.addEventListener('online', function () { document.getElementById('secure-network').textContent = 'CONNECTED'; report('NETWORK_RECONNECTED', 'Connection to the exam server was restored.'); });
     document.addEventListener('copy', function (event) { if (!config.policy.allowCopy) { event.preventDefault(); report('COPY_ATTEMPT', 'Copying is not allowed during this examination.'); } });
     document.addEventListener('paste', function (event) { if (!config.policy.allowPaste) { event.preventDefault(); report('PASTE_ATTEMPT', 'Pasting is not allowed during this examination.'); } });
-    document.addEventListener('keydown', function (event) { if (!config.policy.allowPrinting && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); report('PRINT_ATTEMPT', 'Printing is not allowed during this examination.'); } if ((event.ctrlKey || event.metaKey) && ['l', 't', 'n', 'w'].indexOf(event.key.toLowerCase()) >= 0) { event.preventDefault(); report('NEW_WINDOW_ATTEMPT', 'Opening a new tab or window is not allowed during this examination.'); } });
+    document.addEventListener('keydown', function (event) {
+      var key = event.key ? event.key.toLowerCase() : '';
+      var screenshotCombo = event.key === 'PrintScreen' ||
+        (event.key === 'Snapshot') ||
+        (event.key === 'Insert' && event.shiftKey && event.ctrlKey) ||
+        (event.key === 's' && event.ctrlKey && event.shiftKey) ||
+        (event.key === 'l' && event.ctrlKey && event.shiftKey) ||
+        (event.key === 'f12') ||
+        ((event.ctrlKey || event.metaKey) && event.shiftKey && ['3', '4', 'i', 'j', 'c'].indexOf(key) >= 0);
+
+      if (!config.policy.allowPrinting && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        showBlockedNotification('PRINT_ATTEMPT', 'Printing is not allowed during this examination. This action has been logged.');
+      }
+      if (screenshotCombo) {
+        event.preventDefault();
+        showBlockedNotification('SCREENSHOT_ATTEMPT', 'Screenshots are not allowed during the exam. This action has been recorded.');
+      }
+      if ((event.ctrlKey || event.metaKey) && ['l', 't', 'n', 'w'].indexOf(event.key.toLowerCase()) >= 0) {
+        event.preventDefault();
+        report('NEW_WINDOW_ATTEMPT', 'Opening a new tab or window is not allowed during this examination.');
+      }
+    });
+    document.addEventListener('keyup', function (event) {
+      if (event.key === 'PrintScreen' || event.key === 'Snapshot') {
+        event.preventDefault();
+        showBlockedNotification('SCREENSHOT_ATTEMPT', 'Screenshots are not allowed during the exam. This action has been recorded.');
+      }
+    });
     window.addEventListener('beforeunload', function () { if (!ended) report('FOCUS_LOST', 'The exam page attempted to unload.'); });
   }
 

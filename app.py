@@ -200,9 +200,9 @@ def _ensure_exam_results_table():
 
 
 def _risk_level(score):
-	if score >= 30:
+	if score > 70:
 		return 'High Risk'
-	if score >= 10:
+	if score >= 50:
 		return 'Moderate'
 	return 'Safe'
 
@@ -3028,7 +3028,7 @@ def test_update_time():
 		cur = mysql.connection.cursor()
 		time_left = request.form['time']
 		testid = request.form['testid']
-		cur.execute('UPDATE studentTestInfo set time_left=SEC_TO_TIME(%s) where test_id = %s and email = %s and uid = %s and completed=0', (time_left, testid, session['email'], session['uid']))
+		cur.execute('UPDATE studenttestinfo set time_left=SEC_TO_TIME(%s) where test_id = %s and email = %s and uid = %s and completed=0', (time_left, testid, session['email'], session['uid']))
 		mysql.connection.commit()
 		t1 = cur.rowcount
 		cur.close()
@@ -3036,7 +3036,7 @@ def test_update_time():
 			return "time recorded updated"
 		else:
 			cur = mysql.connection.cursor()
-			cur.execute('INSERT into studentTestInfo (email, test_id,time_left,uid) values(%s,%s,SEC_TO_TIME(%s),%s)', (session['email'], testid, time_left, session['uid']))
+			cur.execute('INSERT into studenttestinfo (email, test_id,time_left,uid) values(%s,%s,SEC_TO_TIME(%s),%s)', (session['email'], testid, time_left, session['uid']))
 			t2 = mysql.connection.commit()
 			t2 = cur.rowcount
 			cur.close()
@@ -3281,7 +3281,7 @@ def give_test():
 						
 						# Allow a five-minute clock-skew buffer when checking the start time.
 						if exam_window_is_open(start_dt, end_dt, now):
-							results = cur.execute('SELECT time_to_sec(time_left) as time_left, completed from studentTestInfo where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
+							results = cur.execute('SELECT time_to_sec(time_left) as time_left, completed from studenttestinfo where email = %s and test_id = %s and uid = %s', (session['email'], test_id, session['uid']))
 							marked_ans = {}
 							if results > 0:
 								row_info = cur.fetchone()
@@ -3297,7 +3297,7 @@ def give_test():
 										for row in cur.fetchall():
 											marked_ans[str(row['qid'])] = row['ans']
 							else:
-								cur.execute('INSERT into studentTestInfo (email, test_id, time_left, uid) values(%s, %s, SEC_TO_TIME(%s), %s)', (session['email'], test_id, duration, session['uid']))
+								cur.execute('INSERT into studenttestinfo (email, test_id, time_left, uid) values(%s, %s, SEC_TO_TIME(%s), %s)', (session['email'], test_id, duration, session['uid']))
 								mysql.connection.commit()
 							
 							cur.close()
@@ -3432,7 +3432,7 @@ def test(testid):
 				cur = mysql.connection.cursor()
 				time_left = request.form['time']
 				try:
-					cur.execute('UPDATE studentTestInfo set time_left=SEC_TO_TIME(%s) where test_id = %s and email = %s and uid = %s and completed=0', (time_left, testid, session['email'], session['uid']))
+					cur.execute('UPDATE studenttestinfo set time_left=SEC_TO_TIME(%s) where test_id = %s and email = %s and uid = %s and completed=0', (time_left, testid, session['email'], session['uid']))
 					mysql.connection.commit()
 					cur.close()
 					return json.dumps({'time':'fired'})
@@ -3451,7 +3451,7 @@ def test(testid):
 						cur, session['email'], testid, session['uid'], submitted_answers
 					)
 
-					cur.execute('UPDATE studentTestInfo set completed=1,time_left=sec_to_time(0) where test_id = %s and email = %s and uid = %s', (testid, session['email'],session['uid']))
+					cur.execute('UPDATE studenttestinfo set completed=1,time_left=sec_to_time(0) where test_id = %s and email = %s and uid = %s', (testid, session['email'],session['uid']))
 					mysql.connection.commit()
 					rows = cur.rowcount
 					app.logger.info('Answers persisted: exam_id=%s student_id=%s submitted=%s', testid, session['uid'], saved_answers)
@@ -3483,7 +3483,7 @@ def test(testid):
 			cur = mysql.connection.cursor()
 			cur.execute('SELECT test_id, qid, q, marks from longqa where test_id = %s ORDER BY RAND()',[testid])
 			callresults1 = cur.fetchall()
-			cur.execute('SELECT time_to_sec(time_left) as duration from studentTestInfo where completed = 0 and test_id = %s and email = %s and uid = %s', (testid, session['email'], session['uid']))
+			cur.execute('SELECT time_to_sec(time_left) as duration from studenttestinfo where completed = 0 and test_id = %s and email = %s and uid = %s', (testid, session['email'], session['uid']))
 			studentTestInfo = cur.fetchone()
 			if studentTestInfo != None:
 				duration = studentTestInfo['duration']
@@ -3520,7 +3520,7 @@ def test(testid):
 				mysql.connection.commit()
 			else:
 				if insertStudentData > 0:
-					insertStudentTestInfoData = cur.execute('UPDATE studentTestInfo set completed = 1 where test_id = %s and email = %s and uid = %s', (test_id, session['email'], session['uid']))
+					insertStudentTestInfoData = cur.execute('UPDATE studenttestinfo set completed = 1 where test_id = %s and email = %s and uid = %s', (test_id, session['email'], session['uid']))
 					mysql.connection.commit()
 					cur.close()
 					if insertStudentTestInfoData > 0:
@@ -3547,7 +3547,7 @@ def test(testid):
 			cur = mysql.connection.cursor()
 			cur.execute('SELECT test_id, qid, q, marks, compiler from practicalqa where test_id = %s ORDER BY RAND()',[testid])
 			callresults1 = cur.fetchall()
-			cur.execute('SELECT time_to_sec(time_left) as duration from studentTestInfo where completed = 0 and test_id = %s and email = %s and uid = %s', (testid, session['email'], session['uid']))
+			cur.execute('SELECT time_to_sec(time_left) as duration from studenttestinfo where completed = 0 and test_id = %s and email = %s and uid = %s', (testid, session['email'], session['uid']))
 			studentTestInfo = cur.fetchone()
 			if studentTestInfo != None:
 				duration = studentTestInfo['duration']
@@ -3578,7 +3578,7 @@ def test(testid):
 			insertStudentData = cur.execute('INSERT INTO practicaltest(email,test_id,qid,code,input,executed,uid) values(%s,%s,%s,%s,%s,%s,%s)', (session['email'], testid, "1", codeByStudent, inputByStudent, executedByStudent, session['uid']))
 			mysql.connection.commit()
 			if insertStudentData > 0:
-				insertStudentTestInfoData = cur.execute('UPDATE studentTestInfo set completed = 1 where test_id = %s and email = %s and uid = %s', (test_id, session['email'], session['uid']))
+				insertStudentTestInfoData = cur.execute('UPDATE studenttestinfo set completed = 1 where test_id = %s and email = %s and uid = %s', (test_id, session['email'], session['uid']))
 				mysql.connection.commit()
 				cur.close()
 				if insertStudentTestInfoData > 0:

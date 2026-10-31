@@ -252,6 +252,11 @@ function logoutUser() {
 }
 
 // Disable right-click and copy-paste, except on inputs/textareas
+const blockScreenshotAttempt = () => {
+    alert('Screenshots and screen capture are not allowed during the exam.');
+    return false;
+};
+
 document.addEventListener('contextmenu', e => {
     if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
         e.preventDefault();
@@ -273,11 +278,60 @@ document.addEventListener('cut', e => {
     }
 });
 document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key == 'p') {
+    const key = e.key ? e.key.toLowerCase() : '';
+    const isPrintShortcut = e.key === 'PrintScreen' ||
+        (e.key === 'Insert' && e.shiftKey && e.ctrlKey) ||
+        (e.key === '3' && (e.ctrlKey || e.metaKey) && e.shiftKey) ||
+        (e.key === '4' && (e.ctrlKey || e.metaKey) && e.shiftKey) ||
+        (e.key === 's' && e.ctrlKey && e.shiftKey) ||
+        (e.key === 'l' && e.ctrlKey && e.shiftKey) ||
+        (e.key === 'f12');
+
+    if (e.ctrlKey && (key === 'p' || key === 'c' || key === 'v' || key === 'x')) {
         e.preventDefault();
-        alert('Printing is not allowed during an exam.');
+        blockScreenshotAttempt();
+        return;
+    }
+
+    if (isPrintShortcut || e.key === 'PrintScreen') {
+        e.preventDefault();
+        blockScreenshotAttempt();
+    }
+
+    if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && (key === 'i' || key === 'j' || key === 'c'))) {
+        e.preventDefault();
+        blockScreenshotAttempt();
     }
 });
+
+document.addEventListener('keyup', (e) => {
+    if (e.key === 'PrintScreen') {
+        blockScreenshotAttempt();
+    }
+});
+
+window.addEventListener('blur', () => {
+    setTimeout(() => {
+        if (document.visibilityState === 'hidden') {
+            alert('Leaving the exam tab or taking a screenshot is not allowed during the exam.');
+        }
+    }, 100);
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        alert('The exam is active. Please stay on this page.');
+    }
+});
+
+if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+    const originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getDisplayMedia = function () {
+        alert('Screen capture is not allowed during the exam.');
+        return Promise.reject(new Error('Screen capture disabled during exam.'));
+    };
+    navigator.mediaDevices.getDisplayMedia.__original = originalGetDisplayMedia;
+}
 </script>
 </body>
 </html>
